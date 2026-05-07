@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>친절한마이쮸 — 수출입 원가관리</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -263,7 +264,36 @@ th.col-filtered { color: var(--accent); }
 </style>
 </head>
 <body>
-<div class="app">
+<!-- 로그인 overlay -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:#fafafa;z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#ffffff;border:1px solid #e4e4e7;border-radius:8px;padding:40px 40px 36px;width:360px;box-shadow:0 4px 6px -1px rgb(0 0 0/.08)">
+    <div style="margin-bottom:28px">
+      <div style="font-size:20px;font-weight:600;color:#18181b;letter-spacing:-.3px">친절한마이쮸</div>
+      <div style="font-size:13px;color:#71717a;margin-top:4px">수출입 원가관리 시스템</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:12px;font-weight:500;color:#18181b;display:block;margin-bottom:5px">이메일</label>
+        <input id="login-email" type="email" autocomplete="email" placeholder="email@example.com"
+          style="width:100%;padding:8px 10px;border:1px solid #e4e4e7;border-radius:6px;font-size:13px;outline:none;font-family:inherit;transition:border-color .15s"
+          onfocus="this.style.borderColor='#86efac'" onblur="this.style.borderColor='#e4e4e7'">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:500;color:#18181b;display:block;margin-bottom:5px">비밀번호</label>
+        <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••"
+          style="width:100%;padding:8px 10px;border:1px solid #e4e4e7;border-radius:6px;font-size:13px;outline:none;font-family:inherit;transition:border-color .15s"
+          onfocus="this.style.borderColor='#86efac'" onblur="this.style.borderColor='#e4e4e7'"
+          onkeydown="if(event.key==='Enter') signIn()">
+      </div>
+      <div id="login-error" style="font-size:12px;color:#b91c1c;min-height:16px;margin-top:-4px"></div>
+      <button id="login-btn" onclick="signIn()"
+        style="width:100%;padding:10px;background:#18181b;color:#fafafa;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:background .15s"
+        onmouseover="this.style.background='#27272a'" onmouseout="this.style.background='#18181b'">로그인</button>
+    </div>
+  </div>
+</div>
+
+<div class="app" id="app" style="display:none">
 
 <!-- Sidebar -->
 <aside class="sidebar">
@@ -297,6 +327,9 @@ th.col-filtered { color: var(--accent); }
       <span class="topbar-title" id="topbar-title">발주 추적 보드</span>
     </div>
     <div class="topbar-right">
+      <span id="user-email" style="font-size:11px;color:var(--text3);margin-right:4px"></span>
+      <button class="btn btn-sm btn-ghost" onclick="signOut()" style="color:var(--text3);font-size:11px">로그아웃</button>
+      <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
       <button class="btn btn-primary btn-sm" onclick="openOrderModal()">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
         발주 등록
@@ -716,39 +749,130 @@ th.col-filtered { color: var(--accent); }
 <div class="toast" id="toast"></div>
 
 <script>
-// ─── 초기 데이터 ───────────────────────────────────────────
-let products = [
-  {id:'p1', name:'친마-홈바의자(HJ-C)', option:'등받이형-다크우드', pcode:'HJ-C-BD', ocode:'HBC-B-DW', cbm:0.035, supplier:'루반죽예', url:''},
-  {id:'p2', name:'친마-홈바의자(HJ-C)', option:'등받이형-라이트우드', pcode:'HJ-C-BL', ocode:'HBC-B-LW', cbm:0.035, supplier:'루반죽예', url:''},
-  {id:'p3', name:'친마-홈바의자(HJ-C)', option:'일반형-다크우드', pcode:'HJ-C-ND', ocode:'HBC-N-DW', cbm:0.028, supplier:'루반죽예', url:''},
-  {id:'p4', name:'친마-홈바의자(HJ-C)', option:'일반형-라이트우드', pcode:'HJ-C-NL', ocode:'HBC-N-LW', cbm:0.028, supplier:'루반죽예', url:''},
-  {id:'p5', name:'친마-화분받침대(HJ-C)', option:'행거형-60cm', pcode:'HJ-C-H6', ocode:'HF-H-60', cbm:0.0436, supplier:'항저우공장', url:''},
-  {id:'p6', name:'친마-화분받침대(HJ-C)', option:'행거형-80cm', pcode:'HJ-C-H8', ocode:'HF-H-80', cbm:0.0437, supplier:'항저우공장', url:''},
-  {id:'p7', name:'친마-화분받침대(HJ-C)', option:'행거형-100cm', pcode:'HJ-C-H10', ocode:'HF-H-100', cbm:0.0437, supplier:'항저우공장', url:''},
-  {id:'p8', name:'늘어나는 싱크대 하부장 (중)-화이트', option:'36-60*28*26CM', pcode:'SK-M-W-26', ocode:'SK-M-W-26', cbm:0.00875, supplier:'극치공간', url:''},
-  {id:'p9', name:'늘어나는 싱크대 하부장 (중)-화이트', option:'36-60*28*18CM', pcode:'SK-M-W-18', ocode:'SK-M-W-18', cbm:0.00875, supplier:'극치공간', url:''},
-  {id:'p10', name:'웨이즈홈-만도린채칼', option:'블랙', pcode:'WZ-MC-BK', ocode:'WZ-MC-BK', cbm:0.011, supplier:'웨이즈홈', url:'https://detail.1688.com/offer/672836382156.html'},
-];
+// ─── SUPABASE 초기화 ────────────────────────────────────────────
+const SUPABASE_URL = 'https://tvjqxwgmuyaxakmtdpcj.supabase.co'
+const SUPABASE_KEY = 'sb_publishable_FVuREr96RmETWEt_Zm3otQ_gUVu_ruQ'
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
 
-let orders = [
-  {id:'o1',  pid:'p8',  shipTag:'',        qty:300,  rate:218.51, price:36,   orderDate:'2026-03-16', factoryDate:'2026-03-28', whDate:'2026-04-02', shipDate:'2026-04-06', arriveDate:'2026-04-07', costPerUnit:14369,  extraCosts:[], status:'done'},
-  {id:'o2',  pid:'p9',  shipTag:'',        qty:300,  rate:218.51, price:35.5, orderDate:'2026-03-16', factoryDate:'2026-03-28', whDate:'2026-04-02', shipDate:'2026-04-06', arriveDate:'2026-04-07', costPerUnit:14203,  extraCosts:[], status:'done'},
-  {id:'o3',  pid:'p6',  shipTag:'',        qty:126,  rate:210.08, price:146,  orderDate:'2026-03-12', factoryDate:'2026-03-25', whDate:'2026-04-01', shipDate:'2026-04-06', arriveDate:'2026-04-07', costPerUnit:53891,  extraCosts:[], status:'done'},
-  {id:'o4',  pid:'p5',  shipTag:'',        qty:42,   rate:210.08, price:125,  orderDate:'2026-03-12', factoryDate:'2026-03-25', whDate:'2026-04-01', shipDate:'2026-04-06', arriveDate:'2026-04-14', costPerUnit:54218,  extraCosts:[{type:'통관수수료 추가', amount:33000, date:'2026-04-14', note:'검사 지연 추가 청구'},{type:'장치료', amount:15000, date:'2026-04-14', note:'보세창고 7일 보관'}], status:'delay'},
-  {id:'o5',  pid:'p7',  shipTag:'',        qty:84,   rate:210.08, price:166,  orderDate:'2026-03-12', factoryDate:'2026-03-25', whDate:'2026-04-01', shipDate:'2026-04-06', arriveDate:'2026-04-07', costPerUnit:60268,  extraCosts:[], status:'done'},
-  {id:'o6',  pid:'p2',  shipTag:'',        qty:65,   rate:217.51, price:97,   orderDate:'2026-03-12', factoryDate:'2026-03-20', whDate:'2026-03-28', shipDate:'2026-04-01', arriveDate:'2026-04-03', costPerUnit:37215,  extraCosts:[], status:'done'},
-  {id:'o7',  pid:'p1',  shipTag:'',        qty:325,  rate:217.51, price:97,   orderDate:'2026-03-12', factoryDate:'2026-03-20', whDate:'2026-03-28', shipDate:'2026-04-01', arriveDate:'2026-04-03', costPerUnit:37215,  extraCosts:[], status:'done'},
-  {id:'o8',  pid:'p3',  shipTag:'',        qty:100,  rate:217.51, price:80,   orderDate:'2026-03-12', factoryDate:'2026-03-20', whDate:'2026-03-28', shipDate:'2026-04-01', arriveDate:'2026-04-03', costPerUnit:37215,  extraCosts:[], status:'done'},
-  {id:'o9',  pid:'p10', shipTag:'만도린',  qty:1008, rate:219.63, price:51.6, orderDate:'2026-02-24', factoryDate:'2026-03-10', whDate:'2026-03-20', shipDate:'2026-04-01', arriveDate:'',           costPerUnit:null,   extraCosts:[], status:'active'},
-  {id:'o10', pid:'p4',  shipTag:'',        qty:200,  rate:220.10, price:80,   orderDate:'2026-04-10', factoryDate:'',           whDate:'',           shipDate:'',           arriveDate:'',           costPerUnit:null,   extraCosts:[], status:'active'},
-];
-
+// ─── 인메모리 데이터 (Supabase에서 로드) ─────────────────────────
+let products = [];
+let orders = [];
 // 선적일(+호선태그) 기준 자동 그룹핑 — 키: 'YYYY-MM-DD' 또는 'YYYY-MM-DD::태그'
-let shipGroups = {
-  '2026-04-06':           {route:'웨이하이→평택', freight:1377800, bl:20000, doCharge:20000, origin:30000, inspectCny:600, inspectRate:219.63, customs:0, vat:1271310, clearance:33000, inland:231000, extraCost:0, saved:true},
-  '2026-04-01':           {route:'웨이하이→평택', freight:1919790, bl:20000, doCharge:20000, origin:30000, inspectCny:0,   inspectRate:219.63, customs:1070, vat:1440900, clearance:33000, inland:0,      extraCost:0, saved:true},
-  '2026-04-01::만도린':   {route:'웨이하이→평택', freight:0,       bl:0,    doCharge:0,      origin:0,    inspectCny:0,   inspectRate:219.63, customs:0,    vat:0,       clearance:0,     inland:0,      extraCost:0, saved:false},
-};
+let shipGroups = {};
+let currentUser = null;
+
+// ─── Auth & Data ─────────────────────────────────────────────
+async function initApp() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    document.getElementById('user-email').textContent = currentUser.email;
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('app').style.display = 'grid';
+    await loadData();
+    updateFilterUI();
+    renderBoard();
+  } else {
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+      currentUser = session.user;
+      document.getElementById('user-email').textContent = currentUser.email;
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('app').style.display = 'grid';
+      await loadData();
+      updateFilterUI();
+      renderBoard();
+    } else if (event === 'SIGNED_OUT') {
+      currentUser = null;
+      document.getElementById('login-overlay').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+      products = []; orders = []; shipGroups = {};
+    }
+  });
+}
+
+async function signIn() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  if (!email || !password) { errEl.textContent = '이메일과 비밀번호를 입력해주세요'; return; }
+  btn.disabled = true; btn.textContent = '로그인 중...';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.textContent = '로그인';
+  if (error) { errEl.textContent = '이메일 또는 비밀번호가 올바르지 않습니다'; return; }
+  errEl.textContent = '';
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+}
+
+async function loadData() {
+  const [{ data: pData }, { data: oData }, { data: sgData }] = await Promise.all([
+    sb.from('products').select('*').order('created_at'),
+    sb.from('orders').select('*').order('created_at'),
+    sb.from('ship_groups').select('*'),
+  ]);
+  products = (pData || []).map(p => ({
+    id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
+    cbm: p.cbm, supplier: p.supplier, url: p.url, imageUrl: p.image_url,
+  }));
+  orders = (oData || []).map(o => ({
+    id: o.id, pid: o.pid, shipTag: o.ship_tag || '', qty: o.qty, rate: o.rate, price: o.price,
+    orderDate: o.order_date || '', factoryDate: o.factory_date || '', factoryMemo: o.factory_memo || '',
+    whDate: o.wh_date || '', shipDate: o.ship_date || '', arriveDate: o.arrive_date || '',
+    costPerUnit: o.cost_per_unit, extraCosts: o.extra_costs || [], status: o.status || 'active',
+  }));
+  shipGroups = {};
+  (sgData || []).forEach(sg => {
+    shipGroups[sg.key] = {
+      route: sg.route, freight: sg.freight, bl: sg.bl, doCharge: sg.do_charge,
+      origin: sg.origin, inspectCny: sg.inspect_cny, inspectRate: sg.inspect_rate,
+      customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
+      extraCost: sg.extra_cost, saved: sg.saved,
+    };
+  });
+}
+
+async function syncOrder(o) {
+  await sb.from('orders').upsert({
+    id: o.id, pid: o.pid, ship_tag: o.shipTag, qty: o.qty, rate: o.rate, price: o.price,
+    order_date: o.orderDate, factory_date: o.factoryDate || null, factory_memo: o.factoryMemo || null,
+    wh_date: o.whDate || null, ship_date: o.shipDate || null, arrive_date: o.arriveDate || null,
+    cost_per_unit: o.costPerUnit, extra_costs: o.extraCosts, status: o.status,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function syncProduct(p) {
+  await sb.from('products').upsert({
+    id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
+    cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
+  });
+}
+
+async function syncShipGroup(key) {
+  const sg = shipGroups[key];
+  if (!sg) return;
+  await sb.from('ship_groups').upsert({
+    key, route: sg.route, freight: sg.freight, bl: sg.bl, do_charge: sg.doCharge,
+    origin: sg.origin, inspect_cny: sg.inspectCny, inspect_rate: sg.inspectRate,
+    customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
+    extra_cost: sg.extraCost, saved: sg.saved, updated_at: new Date().toISOString(),
+  });
+}
+
+async function logActivity(action, entityType, entityId, summary) {
+  if (!currentUser) return;
+  await sb.from('activity_logs').insert({
+    user_email: currentUser.email, action, entity_type: entityType,
+    entity_id: String(entityId), summary,
+  });
+}
 
 // ─── 상태 ───────────────────────────────────────────────────
 // 컬럼 필터 상태
@@ -1507,20 +1631,23 @@ function saveOrder() {
   commitOrderSave({ selected, rate, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag: '' });
 }
 
-function commitOrderSave({ selected, rate, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag }) {
-  let added = 0;
+async function commitOrderSave({ selected, rate, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag }) {
+  const newOrders = [];
   selected.forEach(pid => {
     const qty = parseFloat(document.getElementById('orow-qty-' + pid)?.value);
     const price = parseFloat(document.getElementById('orow-price-' + pid)?.value);
     if (!qty || !price) return;
-    const newId = 'o' + (Date.now() + Math.random()).toString(36);
-    orders.unshift({ id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, costPerUnit: null, extraCosts: [], status: 'active' });
-    added++;
+    const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    const o = { id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, costPerUnit: null, extraCosts: [], status: 'active' };
+    orders.unshift(o);
+    newOrders.push(o);
   });
-  if (added === 0) { showToast('수량과 단가를 입력해주세요'); return; }
+  if (newOrders.length === 0) { showToast('수량과 단가를 입력해주세요'); return; }
   closeModal('order-modal');
   renderBoard();
-  showToast(`${added}건 발주가 등록되었습니다`);
+  showToast(`${newOrders.length}건 발주가 등록되었습니다`);
+  await Promise.all(newOrders.map(o => syncOrder(o)));
+  await logActivity('create', 'order', newOrders.map(o=>o.id).join(','), `발주 ${newOrders.length}건 등록`);
 }
 
 // ─── 상세 모달 ────────────────────────────────────────────────
@@ -1655,7 +1782,7 @@ function saveDetail() {
   commitDetailSave();
 }
 
-function commitDetailSave() {
+async function commitDetailSave() {
   const o = getOrder(currentOrderId);
   o.qty = parseFloat(document.getElementById('d-qty').value) || o.qty;
   o.rate = parseFloat(document.getElementById('d-rate').value) || o.rate;
@@ -1670,14 +1797,19 @@ function commitDetailSave() {
   closeModal('detail-modal');
   renderBoard();
   showToast('저장되었습니다');
+  await syncOrder(o);
+  await logActivity('update', 'order', o.id, `발주 수정: ${getProduct(o.pid).name}`);
 }
 
-function deleteOrder() {
+async function deleteOrder() {
   if (!confirm('이 발주 건을 삭제하시겠습니까?')) return;
+  const o = getOrder(currentOrderId);
   orders = orders.filter(o => o.id !== currentOrderId);
   closeModal('detail-modal');
   renderBoard();
   showToast('삭제되었습니다');
+  await sb.from('orders').delete().eq('id', currentOrderId);
+  await logActivity('delete', 'order', currentOrderId, `발주 삭제: ${getProduct(o?.pid).name || currentOrderId}`);
 }
 
 // ─── 원가 입력 모달 ──────────────────────────────────────────
@@ -1816,7 +1948,7 @@ function calcCostPreview() {
   document.getElementById('cost-result-rows').innerHTML = resultHtml || '<div style="font-size:12px;color:var(--text3);padding:8px 4px">제품을 선적 묶음에 배정하면 자동 계산됩니다</div>';
 }
 
-function saveCost() {
+async function saveCost() {
   const sg = shipGroups[currentShipGroup];
   const freight = parseFloat(document.getElementById('c-freight').value)||0;
   const bl = parseFloat(document.getElementById('c-bl').value)||0;
@@ -1869,6 +2001,9 @@ function saveCost() {
   closeModal('cost-modal');
   renderBoard();
   showToast('원가가 저장되었습니다');
+  await syncShipGroup(currentShipGroup);
+  await Promise.all(sgOrders.map(o => syncOrder(o)));
+  await logActivity('update', 'ship_group', currentShipGroup, `원가 저장: ${getGroupName(currentShipGroup)}`);
 }
 
 // ─── 제품 등록/수정 모달 ─────────────────────────────────────
@@ -1956,7 +2091,7 @@ function clearProductImg() {
   currentProductImgData = null;
 }
 
-function saveProduct() {
+async function saveProduct() {
   const name = document.getElementById('p-name').value.trim();
   const option = document.getElementById('p-option').value.trim();
   if (!name || !option) { showToast('상품명과 옵션명은 필수입니다'); return; }
@@ -1976,24 +2111,32 @@ function saveProduct() {
     renderProductView();
     renderBoard();
     showToast('제품이 수정되었습니다');
+    await syncProduct(p);
+    await logActivity('update', 'product', p.id, `제품 수정: ${p.name} - ${p.option}`);
   } else {
-    products.push({ id: 'p' + (products.length + 1), ...data });
+    const newP = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...data };
+    products.push(newP);
     closeModal('product-modal');
     renderProductView();
     showToast('제품이 등록되었습니다');
+    await syncProduct(newP);
+    await logActivity('create', 'product', newP.id, `제품 등록: ${newP.name} - ${newP.option}`);
   }
 }
 
-function deleteProduct() {
+async function deleteProduct() {
   const p = products.find(p => p.id === currentEditProductId);
   if (!p) return;
   const usedCnt = orders.filter(o => o.pid === p.id).length;
   if (usedCnt > 0) { showToast(`발주 이력 ${usedCnt}건이 있어 삭제할 수 없습니다`); return; }
   if (!confirm(`"${p.name} - ${p.option}"을(를) 삭제하시겠습니까?`)) return;
+  const deletedName = `${p.name} - ${p.option}`;
   products = products.filter(p => p.id !== currentEditProductId);
   closeModal('product-modal');
   renderProductView();
   showToast('제품이 삭제되었습니다');
+  await sb.from('products').delete().eq('id', currentEditProductId);
+  await logActivity('delete', 'product', currentEditProductId, `제품 삭제: ${deletedName}`);
 }
 
 // ─── 엑셀 업로드 ─────────────────────────────────────────────
@@ -2072,18 +2215,23 @@ function uploadProductExcel(input) {
   reader.readAsArrayBuffer(file);
 }
 
-function confirmExcelUpload() {
+async function confirmExcelUpload() {
   let added = 0, skipped = 0;
+  const newProducts = [];
   excelPendingProducts.forEach(p => {
     const dup = products.some(e => e.name === p.name && e.option === p.option);
     if (dup) { skipped++; return; }
-    products.push({ id: 'p' + (Date.now() + Math.random()).toString(36), ...p });
+    const newP = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...p };
+    products.push(newP);
+    newProducts.push(newP);
     added++;
   });
   cancelExcelUpload();
   renderProductView();
   const msg = skipped > 0 ? `${added}개 등록, ${skipped}개 중복 건너뜀` : `${added}개 제품이 등록되었습니다`;
   showToast(msg);
+  await Promise.all(newProducts.map(p => syncProduct(p)));
+  if (newProducts.length > 0) await logActivity('create', 'product', 'bulk', `엑셀 업로드 ${newProducts.length}개 등록`);
 }
 
 function cancelExcelUpload() {
@@ -2105,8 +2253,7 @@ document.addEventListener('click', e => {
     closeColFilterDropdown();
   }
 });
-updateFilterUI();
-renderBoard();
+initApp();
 
 // ─── 다중선택 / 일괄편집 ─────────────────────────────────────
 function updateBulkBar() {
@@ -2148,7 +2295,8 @@ function applyBulkEdit() {
   commitBulkEdit(fields, '');
 }
 
-function commitBulkEdit(fields, shipTag) {
+async function commitBulkEdit(fields, shipTag) {
+  const updatedOrders = [];
   selectedOrders.forEach(oid => {
     const o = getOrder(oid);
     if (!o) return;
@@ -2162,10 +2310,13 @@ function commitBulkEdit(fields, shipTag) {
       }
     });
     if (o.arriveDate) o.status = (o.extraCosts?.length > 0) ? 'delay' : 'done';
+    updatedOrders.push(o);
   });
   clearSelection();
   renderBoard();
   showToast('일괄 수정되었습니다');
+  await Promise.all(updatedOrders.map(o => syncOrder(o)));
+  await logActivity('update', 'order', 'bulk', `일괄 수정 ${updatedOrders.length}건`);
 }
 
 function clearSelection() {
