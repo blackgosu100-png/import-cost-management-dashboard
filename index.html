@@ -350,6 +350,11 @@ th.col-filtered { color: var(--accent); }
       <div id="active-filters" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
       <div class="toolbar-spacer"></div>
       <button class="btn btn-sm btn-ghost" onclick="clearAllFilters()" id="clear-filters-btn" style="display:none;color:var(--danger)">필터 초기화</button>
+      <button class="btn btn-sm btn-ghost" onclick="document.getElementById('import-excel-input').click()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8V1M3 4l3-3 3 3M1 10h10"/></svg>
+        발주 엑셀 가져오기
+      </button>
+      <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="display:none" onchange="importOrderExcel(this)">
     </div>
 
     <!-- Bulk edit bar -->
@@ -732,6 +737,26 @@ th.col-filtered { color: var(--accent); }
       <button class="btn btn-ghost" id="product-delete-btn" onclick="deleteProduct()" style="color:var(--danger);margin-right:auto;display:none">삭제</button>
       <button class="btn" onclick="closeModal('product-modal')">취소</button>
       <button class="btn btn-primary" id="product-save-btn" onclick="saveProduct()">등록</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 발주 엑셀 가져오기 -->
+<div class="modal-backdrop" id="import-modal">
+  <div class="modal" style="width:900px;max-width:95vw">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">발주 엑셀 가져오기</div>
+        <div class="modal-sub" id="import-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeImportModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="overflow:auto;max-height:60vh" id="import-preview-wrap"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeImportModal()">취소</button>
+      <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">가져오기 확정</button>
     </div>
   </div>
 </div>
@@ -2504,6 +2529,211 @@ document.addEventListener('mouseup', () => {
   document.body.style.userSelect = '';
   _rsCol = null;
 });
+// ─── 발주 엑셀 가져오기 ──────────────────────────────────────
+let _importRows = [];
+
+function importOrderExcel(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const wb = XLSX.read(ev.target.result, { type: 'array', cellDates: false });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (raw.length < 2) { showToast('데이터가 없습니다'); return; }
+
+      // 헤더 행 찾기 (상품명 포함된 행)
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(5, raw.length); i++) {
+        if (raw[i].some(c => String(c).includes('상품명'))) { headerIdx = i; break; }
+      }
+      const headers = raw[headerIdx].map(h => String(h).trim());
+      const col = name => headers.findIndex(h => h.includes(name));
+
+      const CI = {
+        name: col('상품명'), option: col('옵션'), pcode: col('상품코드'),
+        ocode: col('옵션코드'), seq: col('차수'), qty: col('발주수량'),
+        rate: col('환율'), orderDate: col('발주일'), factoryDate: col('공장출고'),
+        whDate: col('위해입고'), shipDate: col('선적일'), arriveDate: col('국내입고'),
+      };
+
+      // 날짜 연도 추정: 발주일 컬럼 순서대로 월이 감소하면 연도 증가
+      const dataRows = raw.slice(headerIdx + 1).filter(r => r[CI.name] && String(r[CI.name]).trim());
+      const baseYear = estimateBaseYear(dataRows, CI.orderDate);
+
+      _importRows = dataRows.map(r => {
+        const name = String(r[CI.name] ?? '').trim();
+        const option = String(r[CI.option] ?? '').trim();
+        if (!name) return null;
+        const existProd = products.find(p => p.name === name && p.option === option);
+        return {
+          name, option,
+          pcode: String(r[CI.pcode] ?? '').trim(),
+          ocode: String(r[CI.ocode] ?? '').trim(),
+          orderSeq: String(r[CI.seq] ?? '').trim(),
+          qty: parseFloat(r[CI.qty]) || 0,
+          rate: parseFloat(r[CI.rate]) || 0,
+          orderDate: parseExcelDateStr(r[CI.orderDate], baseYear),
+          factoryDate: parseExcelDateStr(r[CI.factoryDate], baseYear),
+          whDate: parseExcelDateStr(r[CI.whDate], baseYear),
+          shipDate: parseExcelDateStr(r[CI.shipDate], baseYear),
+          arriveDate: parseExcelDateStr(r[CI.arriveDate], baseYear),
+          existProd,
+          isDup: !!orders.find(o => {
+            const p = products.find(p => p.id === o.pid);
+            return p?.name === name && p?.option === option && o.orderSeq === String(r[CI.seq] ?? '').trim();
+          }),
+        };
+      }).filter(Boolean);
+
+      renderImportPreview();
+      document.getElementById('import-modal').classList.add('open');
+    } catch(e) {
+      showToast('파일을 읽을 수 없습니다: ' + e.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function estimateBaseYear(rows, colIdx) {
+  const now = new Date();
+  let year = now.getFullYear();
+  let prevMonth = null;
+  // 첫 번째 유효한 발주일의 월을 확인해 연도 보정
+  for (const r of rows) {
+    const val = r[colIdx];
+    if (!val) continue;
+    const m = parseMonthDay(val);
+    if (!m) continue;
+    // 첫 달이 현재 달보다 크면 작년 시작
+    if (prevMonth === null && m.month > now.getMonth() + 1) year = now.getFullYear() - 1;
+    prevMonth = m.month;
+    break;
+  }
+  return year;
+}
+
+function parseMonthDay(val) {
+  if (!val && val !== 0) return null;
+  if (typeof val === 'number' && val > 1000) {
+    // Excel serial date
+    const d = XLSX.SSF.parse_date_code(val);
+    return { month: d.m, day: d.d, full: `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`, hasYear: true };
+  }
+  const s = String(val).trim();
+  const m1 = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (m1) return { month: parseInt(m1[1]), day: parseInt(m1[2]), hasYear: false };
+  const m2 = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (m2) return { month: parseInt(m2[2]), day: parseInt(m2[3]), full: `${m2[1]}-${m2[2].padStart(2,'0')}-${m2[3].padStart(2,'0')}`, hasYear: true };
+  const m3 = s.match(/^(\d{1,2})월\s*(\d{1,2})일?$/);
+  if (m3) return { month: parseInt(m3[1]), day: parseInt(m3[2]), hasYear: false };
+  return null;
+}
+
+function parseExcelDateStr(val, baseYear) {
+  if (!val && val !== 0) return '';
+  const m = parseMonthDay(val);
+  if (!m) return '';
+  if (m.hasYear) return m.full;
+  // 연도 추정: baseYear에서 시작, 월이 역행하면 +1년
+  return `${baseYear}-${String(m.month).padStart(2,'0')}-${String(m.day).padStart(2,'0')}`;
+}
+
+function renderImportPreview() {
+  const total = _importRows.length;
+  const dups = _importRows.filter(r => r.isDup).length;
+  const newProds = _importRows.filter(r => !r.existProd && !r.isDup).length;
+  document.getElementById('import-modal-sub').textContent =
+    `총 ${total}행 — 신규 등록 ${total - dups}건 (제품 신규 ${newProds}개 포함) / 중복 건너뜀 ${dups}건`;
+
+  const rows = _importRows.map(r => {
+    const tag = r.isDup
+      ? `<span style="font-size:10px;color:var(--text3);font-weight:500">중복 건너뜀</span>`
+      : !r.existProd
+        ? `<span style="font-size:10px;color:var(--accent);font-weight:500">제품 신규</span>`
+        : `<span style="font-size:10px;color:var(--info);font-weight:500">등록</span>`;
+    return `<tr style="${r.isDup ? 'opacity:.4' : ''}">
+      <td style="padding:6px 10px;font-size:11px;white-space:nowrap">${r.name}</td>
+      <td style="padding:6px 10px;font-size:11px;color:var(--text2)">${r.option}</td>
+      <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.orderSeq}</td>
+      <td style="padding:6px 10px;font-size:11px;text-align:right">${r.qty || '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.orderDate || '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.shipDate || '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.arriveDate || '—'}</td>
+      <td style="padding:6px 10px">${tag}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('import-preview-wrap').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;min-width:700px">
+      <thead style="position:sticky;top:0;background:var(--surface2);z-index:1">
+        <tr>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">상품명</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">옵션</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">차수</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">수량</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">발주일</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">선적일</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">국내입고</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;border-bottom:1px solid var(--border)"></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function confirmImport() {
+  const btn = document.getElementById('import-confirm-btn');
+  btn.disabled = true; btn.textContent = '저장 중...';
+
+  const toImport = _importRows.filter(r => !r.isDup);
+  let savedProds = 0, savedOrders = 0;
+
+  // 1. 신규 제품 저장
+  const newProds = toImport.filter(r => !r.existProd)
+    .reduce((acc, r) => {
+      if (!acc.find(p => p.name === r.name && p.option === r.option)) acc.push(r);
+      return acc;
+    }, []);
+
+  for (const r of newProds) {
+    const p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), name: r.name, option: r.option, pcode: r.pcode, ocode: r.ocode, cbm: 0, supplier: '', url: '', imageUrl: '' };
+    products.push(p);
+    await syncProduct(p);
+    savedProds++;
+  }
+
+  // 2. 발주 저장 (50개씩 배치)
+  for (const r of toImport) {
+    const prod = products.find(p => p.name === r.name && p.option === r.option);
+    if (!prod || !r.qty) continue;
+    const o = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      pid: prod.id, qty: r.qty, rate: r.rate, price: 0, orderSeq: r.orderSeq,
+      orderDate: r.orderDate, factoryDate: r.factoryDate, factoryMemo: '',
+      whDate: r.whDate, shipDate: r.shipDate, arriveDate: r.arriveDate,
+      shipTag: '', costPerUnit: null, extraCosts: [], status: 'active',
+    };
+    orders.push(o);
+    await syncOrder(o);
+    savedOrders++;
+    await new Promise(res => setTimeout(res, 30)); // rate limit 방지
+  }
+
+  closeImportModal();
+  renderBoard();
+  showToast(`제품 ${savedProds}개, 발주 ${savedOrders}건 가져오기 완료`);
+  await logActivity('create', 'order', 'import', `엑셀 가져오기: 발주 ${savedOrders}건`);
+}
+
+function closeImportModal() {
+  document.getElementById('import-modal').classList.remove('open');
+  document.getElementById('import-confirm-btn').disabled = false;
+  document.getElementById('import-confirm-btn').textContent = '가져오기 확정';
+  _importRows = [];
+}
 </script>
 </body>
 </html>
