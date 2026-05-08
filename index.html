@@ -2515,7 +2515,7 @@ async function commitBulkEdit(fields, shipTag) {
 }
 
 function getVisibleOrderIds() {
-  return [...document.querySelectorAll('#board-tbody tr.data-row')].map(tr => tr.dataset.oid).filter(Boolean);
+  return [...document.querySelectorAll('#board-body tr.data-row')].map(tr => tr.dataset.oid).filter(Boolean);
 }
 
 async function bulkDelete() {
