@@ -466,9 +466,13 @@ th.col-filtered { color: var(--accent); }
         <div class="form-grid form-grid-2">
           <div class="form-group">
             <label class="form-label">상품명 <span>*</span></label>
-            <select class="form-select" id="o-product" onchange="onProductSelect()">
-              <option value="">— 제품 선택 —</option>
-            </select>
+            <div style="position:relative" id="o-product-wrap">
+              <input class="form-input" id="o-product-input" placeholder="상품명 검색..." autocomplete="off"
+                role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list"
+                oninput="onProductSearch()" onkeydown="onProductKeydown(event)"
+                onfocus="onProductFocus()" onblur="setTimeout(closeProductDropdown,150)">
+              <div id="o-product-dropdown" role="listbox" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow);z-index:200;max-height:220px;overflow-y:auto;margin-top:2px"></div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">옵션명 <span>*</span> <span style="font-weight:400;color:var(--text3);font-size:10px">Ctrl+클릭으로 다중 선택</span></label>
@@ -897,6 +901,11 @@ async function logActivity(action, entityType, entityId, summary) {
 }
 
 // ─── 상태 ───────────────────────────────────────────────────
+// 상품 검색 콤보박스 상태
+let _psName = '';    // 선택된 상품명
+let _psIdx  = -1;   // 키보드 하이라이트 인덱스
+let _psList = [];   // 필터링된 상품명 목록
+
 // 컬럼 필터 상태
 let colFilters = {};
 let currentColFilter = null;
@@ -1516,10 +1525,75 @@ function renderProductView() {
 }
 
 // ─── 발주 모달 ────────────────────────────────────────────────
-function openOrderModal() {
-  const sel = document.getElementById('o-product');
+// ─── 상품 검색 콤보박스 ──────────────────────────────────────
+function onProductFocus() {
+  if (!document.getElementById('o-product-input').value) {
+    _psList = [...new Set(products.map(p => p.name))];
+    renderProductDropdown();
+  }
+}
+
+function onProductSearch() {
+  const q = document.getElementById('o-product-input').value.trim().replace(/\s+/g, '');
   const names = [...new Set(products.map(p => p.name))];
-  sel.innerHTML = '<option value="">— 제품 선택 —</option>' + names.map(n => `<option value="${n}">${n}</option>`).join('');
+  _psList = q ? names.filter(n => n.replace(/\s+/g,'').toLowerCase().includes(q.toLowerCase())) : names;
+  _psIdx = -1;
+  _psName = '';
+  renderProductDropdown();
+}
+
+function renderProductDropdown() {
+  const dd = document.getElementById('o-product-dropdown');
+  const MAX = 10;
+  const shown = _psList.slice(0, MAX);
+  const extra = _psList.length - MAX;
+  if (_psList.length === 0) {
+    dd.innerHTML = `<div style="padding:10px 12px;color:var(--text3);font-size:12px">검색 결과 없음</div>`;
+  } else {
+    dd.innerHTML = shown.map((name, i) => {
+      const hi = i === _psIdx;
+      return `<div role="option" onmousedown="selectProductName(this.dataset.name)" data-name="${name.replace(/"/g,'&quot;')}"
+        style="padding:8px 12px;font-size:12px;cursor:pointer;${hi ? 'background:var(--accent-bg);color:var(--accent);font-weight:500;' : 'color:var(--text);'}">${name}</div>`;
+    }).join('') + (extra > 0 ? `<div style="padding:6px 12px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">외 ${extra}건 — 더 입력해서 좁혀주세요</div>` : '');
+  }
+  dd.style.display = '';
+  document.getElementById('o-product-input').setAttribute('aria-expanded', 'true');
+}
+
+function closeProductDropdown() {
+  const dd = document.getElementById('o-product-dropdown');
+  if (!dd) return;
+  dd.style.display = 'none';
+  const inp = document.getElementById('o-product-input');
+  if (inp) inp.setAttribute('aria-expanded', 'false');
+  _psIdx = -1;
+}
+
+function selectProductName(name) {
+  _psName = name;
+  document.getElementById('o-product-input').value = name;
+  closeProductDropdown();
+  onProductSelect();
+}
+
+function onProductKeydown(e) {
+  if (e.isComposing) return;
+  const dd = document.getElementById('o-product-dropdown');
+  if (dd.style.display === 'none') {
+    if (e.key === 'ArrowDown') { _psList = [...new Set(products.map(p => p.name))]; renderProductDropdown(); }
+    return;
+  }
+  const max = Math.min(_psList.length, 10);
+  if (e.key === 'ArrowDown') { e.preventDefault(); _psIdx = Math.min(_psIdx + 1, max - 1); renderProductDropdown(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _psIdx = Math.max(_psIdx - 1, -1); renderProductDropdown(); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (_psIdx >= 0) selectProductName(_psList[_psIdx]); }
+  else if (e.key === 'Escape') { closeProductDropdown(); }
+}
+
+function openOrderModal() {
+  _psName = ''; _psIdx = -1; _psList = [];
+  document.getElementById('o-product-input').value = '';
+  closeProductDropdown();
   document.getElementById('o-option').innerHTML = '';
   document.getElementById('o-rate').value = '';
   ['o-factory','o-wh','o-ship','o-arrive'].forEach(id => document.getElementById(id).value = '');
@@ -1531,8 +1605,7 @@ function openOrderModal() {
 }
 
 function onProductSelect() {
-  const name = document.getElementById('o-product').value;
-  const opts = products.filter(p => p.name === name);
+  const opts = products.filter(p => p.name === _psName);
   const sel = document.getElementById('o-option');
   sel.innerHTML = opts.map(p => `<option value="${p.id}">${p.option}</option>`).join('');
   document.getElementById('o-option-rows').style.display = 'none';
@@ -1628,6 +1701,7 @@ function confirmShipGroup(tag) {
 }
 
 function saveOrder() {
+  if (!_psName) { showToast('상품명을 검색해서 선택해주세요'); return; }
   const sel = document.getElementById('o-option');
   const selected = [...sel.selectedOptions].map(o => o.value).filter(v => v);
   const rate = parseFloat(document.getElementById('o-rate').value);
