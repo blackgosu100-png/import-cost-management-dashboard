@@ -849,10 +849,12 @@ async function syncOrder(o) {
 }
 
 async function syncProduct(p) {
-  await sb.from('products').upsert({
+  const { error } = await sb.from('products').upsert({
     id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
     cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
+    updated_at: new Date().toISOString(),
   });
+  if (error) throw error;
 }
 
 async function syncShipGroup(key) {
@@ -2107,19 +2109,27 @@ async function saveProduct() {
   if (currentEditProductId) {
     const p = products.find(p => p.id === currentEditProductId);
     Object.assign(p, data);
+    try {
+      await syncProduct(p);
+    } catch(e) {
+      showToast('저장 실패: ' + (e.message || e)); console.error('syncProduct error', e); return;
+    }
     closeModal('product-modal');
     renderProductView();
     renderBoard();
     showToast('제품이 수정되었습니다');
-    await syncProduct(p);
     await logActivity('update', 'product', p.id, `제품 수정: ${p.name} - ${p.option}`);
   } else {
     const newP = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...data };
+    try {
+      await syncProduct(newP);
+    } catch(e) {
+      showToast('저장 실패: ' + (e.message || e)); console.error('syncProduct error', e); return;
+    }
     products.push(newP);
     closeModal('product-modal');
     renderProductView();
     showToast('제품이 등록되었습니다');
-    await syncProduct(newP);
     await logActivity('create', 'product', newP.id, `제품 등록: ${newP.name} - ${newP.option}`);
   }
 }
