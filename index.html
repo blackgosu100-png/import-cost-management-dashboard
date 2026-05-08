@@ -123,6 +123,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .board-table tbody tr.data-row.row-done .cell-date,
 .board-table tbody tr.data-row.row-done .cell-num { color: var(--text3); }
 .board-table tbody tr.data-row.row-selected { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-bg) !important; }
+.board-table tbody tr.data-row.row-stored { background: #f5f3ff; }
+.board-table tbody tr.data-row.row-stored:hover { background: #ede9fe; }
 
 /* Bulk edit bar */
 .bulk-bar { position: sticky; top: 36px; z-index: 15; background: #18181b; color: #fafafa; padding: 8px 16px; display: none; align-items: center; gap: 10px; flex-wrap: wrap; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
@@ -667,6 +669,7 @@ th.col-filtered { color: var(--accent); }
     <div class="modal-body" id="detail-modal-body"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="deleteOrder()" style="color:var(--danger);margin-right:auto">삭제</button>
+      <button class="btn btn-ghost" id="split-ship-btn" onclick="openSplitShipment()" style="color:#7c3aed;display:none">분할 선적</button>
       <button class="btn" onclick="closeModal('detail-modal')">닫기</button>
       <button class="btn btn-primary" onclick="saveDetail()">저장</button>
     </div>
@@ -929,6 +932,7 @@ function getProduct(pid) { return products.find(p => p.id === pid) || {}; }
 function getOrder(oid) { return orders.find(o => o.id === oid); }
 
 function getStatus(order) {
+  if (order.status === 'stored') return 'stored';
   if (order.arriveDate) {
     if (order.extraCosts && order.extraCosts.length > 0) return 'delay';
     return 'done';
@@ -940,6 +944,7 @@ function getStatus(order) {
 function statusBadge(order) {
   const s = getStatus(order);
   const td = today();
+  if (s === 'stored') return `<span class="badge" style="background:#f5f3ff;border-color:#c4b5fd;color:#7c3aed"><span class="badge-dot" style="background:#7c3aed"></span>보관중</span>`;
   if (s === 'done') return `<span class="badge badge-green"><span class="badge-dot"></span>입고완료</span>`;
   if (s === 'delay') return `<span class="badge badge-amber"><span class="badge-dot"></span>지연입고</span>`;
   if (order.shipDate) {
@@ -1235,6 +1240,7 @@ function renderBoard() {
     const tr = document.createElement('tr');
     let rowClass = 'data-row';
     if (selectedOrders.has(o.id)) rowClass += ' row-selected';
+    else if (status === 'stored') rowClass += ' row-stored';
     else if (status === 'done' || status === 'delay') rowClass += ' row-done';
     tr.className = rowClass;
     tr.onclick = e => {
@@ -1819,6 +1825,9 @@ function openDetailModal(oid) {
       </div>
     </div>
   `;
+  // 분할 선적 버튼: 수량 > 1이고 입고완료 아닌 경우에만 표시
+  const splitBtn = document.getElementById('split-ship-btn');
+  splitBtn.style.display = (o.qty > 1 && getStatus(o) !== 'done' && getStatus(o) !== 'delay') ? '' : 'none';
   document.getElementById('detail-modal').classList.add('open');
 }
 
@@ -1898,6 +1907,42 @@ async function commitDetailSave() {
   showToast('저장되었습니다');
   await syncOrder(o);
   await logActivity('update', 'order', o.id, `발주 수정: ${getProduct(o.pid).name}`);
+}
+
+function openSplitShipment() {
+  const o = getOrder(currentOrderId);
+  if (!o) return;
+  const shippedStr = prompt(`선적 수량을 입력하세요.\n(발주 수량: ${o.qty}개)\n\n선적분은 현재 행에 유지되고,\n나머지는 "보관중" 행으로 자동 생성됩니다.`);
+  if (shippedStr === null) return;
+  const shipped = parseInt(shippedStr);
+  if (isNaN(shipped) || shipped <= 0) { showToast('올바른 수량을 입력해주세요'); return; }
+  if (shipped >= o.qty) { showToast(`선적 수량은 발주 수량(${o.qty})보다 작아야 합니다`); return; }
+  confirmSplitShipment(shipped);
+}
+
+async function confirmSplitShipment(shippedQty) {
+  const o = getOrder(currentOrderId);
+  if (!o) return;
+  const remainQty = o.qty - shippedQty;
+
+  // 원본 행: 선적 수량으로 업데이트
+  o.qty = shippedQty;
+
+  // 보관중 복사 행 생성
+  const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  const stored = {
+    id: newId, pid: o.pid, qty: remainQty, rate: o.rate, price: o.price,
+    orderDate: o.orderDate, factoryDate: o.factoryDate, factoryMemo: o.factoryMemo,
+    whDate: o.whDate, shipDate: '', arriveDate: '', shipTag: '',
+    orderSeq: o.orderSeq, costPerUnit: null, extraCosts: [], status: 'stored',
+  };
+  orders.push(stored);
+
+  closeModal('detail-modal');
+  renderBoard();
+  showToast(`선적 ${shippedQty}개 / 보관중 ${remainQty}개로 분할되었습니다`);
+  await Promise.all([syncOrder(o), syncOrder(stored)]);
+  await logActivity('update', 'order', o.id, `분할 선적: ${shippedQty}개 선적, ${remainQty}개 보관중`);
 }
 
 async function deleteOrder() {
