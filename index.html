@@ -812,11 +812,18 @@ async function signOut() {
 }
 
 async function loadData() {
-  const [{ data: pData }, { data: oData }, { data: sgData }] = await Promise.all([
+  const [
+    { data: pData, error: pErr },
+    { data: oData, error: oErr },
+    { data: sgData, error: sgErr }
+  ] = await Promise.all([
     sb.from('products').select('*').order('created_at'),
     sb.from('orders').select('*').order('created_at'),
     sb.from('ship_groups').select('*'),
   ]);
+  if (pErr) console.error('products 로드 실패:', pErr);
+  if (oErr) console.error('orders 로드 실패:', oErr);
+  if (sgErr) console.error('ship_groups 로드 실패:', sgErr);
   products = (pData || []).map(p => ({
     id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
     cbm: p.cbm, supplier: p.supplier, url: p.url, imageUrl: p.image_url,
