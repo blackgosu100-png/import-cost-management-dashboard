@@ -1272,33 +1272,43 @@ function renderBoard() {
     else if (status === 'done' || status === 'delay') rowClass += ' row-done';
     tr.className = rowClass;
     tr.dataset.oid = o.id;
+    tr.addEventListener('mousedown', e => { if (e.shiftKey) e.preventDefault(); });
     tr.onclick = e => {
-      if (e.shiftKey && lastSelectedOrderId) {
+      if (e.shiftKey) {
         e.preventDefault();
-        const visibleIds = getVisibleOrderIds();
-        const a = visibleIds.indexOf(lastSelectedOrderId);
-        const b = visibleIds.indexOf(o.id);
-        if (a !== -1 && b !== -1) {
-          const [from, to] = a < b ? [a, b] : [b, a];
-          visibleIds.slice(from, to + 1).forEach(id => selectedOrders.add(id));
+        if (lastSelectedOrderId) {
+          const visibleIds = getVisibleOrderIds();
+          const a = visibleIds.indexOf(lastSelectedOrderId);
+          const b = visibleIds.indexOf(o.id);
+          if (a !== -1 && b !== -1) {
+            const [from, to] = a < b ? [a, b] : [b, a];
+            visibleIds.slice(from, to + 1).forEach(id => selectedOrders.add(id));
+          }
+        } else {
+          selectedOrders.add(o.id);
+          lastSelectedOrderId = o.id;
         }
         updateBulkBar();
         renderBoard();
-      } else if (e.ctrlKey || e.metaKey) {
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
         lastSelectedOrderId = o.id;
         updateBulkBar();
         renderBoard();
-      } else if (selectedOrders.size > 0) {
+        return;
+      }
+      if (selectedOrders.size > 0) {
         selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
         lastSelectedOrderId = o.id;
         updateBulkBar();
         renderBoard();
-      } else {
-        lastSelectedOrderId = o.id;
-        openDetailModal(o.id);
+        return;
       }
+      lastSelectedOrderId = o.id;
+      openDetailModal(o.id);
     };
 
     const costCell = o.costPerUnit
