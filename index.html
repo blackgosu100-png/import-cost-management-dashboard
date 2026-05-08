@@ -488,7 +488,7 @@ th.col-filtered { color: var(--accent); }
               <span style="font-size:10px;color:var(--text3);font-weight:500">옵션</span>
               <span style="font-size:10px;color:var(--text3);font-weight:500">수량 *</span>
               <span style="font-size:10px;color:var(--text3);font-weight:500">위안단가(¥) *</span>
-              <span style="font-size:10px;color:var(--text3);font-weight:500">차수 (자동)</span>
+              <span style="font-size:10px;color:var(--text3);font-weight:500">차수</span>
             </div>
             <div id="o-option-rows-body"></div>
           </div>
@@ -837,6 +837,7 @@ async function loadData() {
     orderDate: o.order_date || '', factoryDate: o.factory_date || '', factoryMemo: o.factory_memo || '',
     whDate: o.wh_date || '', shipDate: o.ship_date || '', arriveDate: o.arrive_date || '',
     costPerUnit: o.cost_per_unit, extraCosts: o.extra_costs || [], status: o.status || 'active',
+    orderSeq: o.order_seq || '',
   }));
   shipGroups = {};
   (sgData || []).forEach(sg => {
@@ -855,6 +856,7 @@ async function syncOrder(o) {
     order_date: o.orderDate, factory_date: o.factoryDate || null, factory_memo: o.factoryMemo || null,
     wh_date: o.whDate || null, ship_date: o.shipDate || null, arrive_date: o.arriveDate || null,
     cost_per_unit: o.costPerUnit, extra_costs: o.extraCosts, status: o.status,
+    order_seq: o.orderSeq || '',
     updated_at: new Date().toISOString(),
   });
 }
@@ -1260,7 +1262,7 @@ function renderBoard() {
           ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
           <div>
             <div class="cell-product-name">${p.name || '—'}</div>
-            <div class="cell-product-sub">${p.option || ''} · ${o.id.replace('o','') + '차'}</div>
+            <div class="cell-product-sub">${p.option || ''}${o.orderSeq ? ' · ' + o.orderSeq : ''}</div>
           </div>
         </div>
       </td>
@@ -1622,14 +1624,14 @@ function onOptionSelect() {
   rowsBody.innerHTML = selected.map(pid => {
     const p = getProduct(pid);
     const prevOrders = orders.filter(o => o.pid === pid).sort((a,b) => b.orderDate > a.orderDate ? -1 : 1);
-    const nextNum = (prevOrders.length + 1) + '차';
+    const lastSeq = prevOrders.length > 0 && prevOrders[0].orderSeq ? prevOrders[0].orderSeq : '';
     const lastPrice = prevOrders.length > 0 ? prevOrders[0].price : '';
     const pricePlaceholder = lastPrice ? `최근 ¥${lastPrice}` : '단가(¥)';
-    return `<div style="display:grid;grid-template-columns:1fr 90px 90px 80px;align-items:center;border-bottom:1px solid var(--border);padding:4px 10px;gap:6px">
+    return `<div style="display:grid;grid-template-columns:1fr 90px 90px 90px;align-items:center;border-bottom:1px solid var(--border);padding:4px 10px;gap:6px">
       <span style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.option}</span>
       <input class="form-input" style="padding:4px 7px;font-size:11px" type="number" placeholder="수량" id="orow-qty-${pid}">
       <input class="form-input" style="padding:4px 7px;font-size:11px;font-family:var(--mono)" type="number" placeholder="${pricePlaceholder}" id="orow-price-${pid}" value="${lastPrice}">
-      <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${nextNum}</span>
+      <input class="form-input" style="padding:4px 7px;font-size:11px" placeholder="차수" id="orow-seq-${pid}" value="" ${lastSeq ? `title="직전 차수: ${lastSeq}"` : ''}>
     </div>`;
   }).join('');
 }
@@ -1733,8 +1735,9 @@ async function commitOrderSave({ selected, rate, orderDate, factoryDate, whDate,
     const qty = parseFloat(document.getElementById('orow-qty-' + pid)?.value);
     const price = parseFloat(document.getElementById('orow-price-' + pid)?.value);
     if (!qty || !price) return;
+    const orderSeq = document.getElementById('orow-seq-' + pid)?.value.trim() || '';
     const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    const o = { id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, costPerUnit: null, extraCosts: [], status: 'active' };
+    const o = { id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, orderSeq, costPerUnit: null, extraCosts: [], status: 'active' };
     orders.unshift(o);
     newOrders.push(o);
   });
@@ -1752,7 +1755,7 @@ function openDetailModal(oid) {
   const o = getOrder(oid);
   const p = getProduct(o.pid);
   document.getElementById('detail-modal-title').textContent = p.name;
-  document.getElementById('detail-modal-sub').textContent = p.option + ' · ' + (o.id.replace('o','') + '차');
+  document.getElementById('detail-modal-sub').textContent = p.option + (o.orderSeq ? ' · ' + o.orderSeq : '');
   const body = document.getElementById('detail-modal-body');
   const imgHtml = p.imageUrl
     ? `<div style="margin-bottom:14px;display:flex;align-items:center;gap:12px">
