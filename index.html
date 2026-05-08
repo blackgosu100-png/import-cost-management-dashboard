@@ -369,6 +369,8 @@ th.col-filtered { color: var(--accent); }
       <div class="bulk-bar-sep"></div>
       <button class="btn btn-sm" onclick="applyBulkEdit()" style="background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4);color:#fff">적용</button>
       <button class="btn btn-sm" onclick="clearSelection()" style="background:transparent;border-color:rgba(255,255,255,.3);color:rgba(255,255,255,.8)">선택 해제</button>
+      <div class="bulk-bar-sep"></div>
+      <button class="btn btn-sm" onclick="bulkDelete()" style="background:rgba(185,28,28,.5);border-color:rgba(252,165,165,.4);color:#fff">선택 삭제</button>
     </div>
 
     <!-- Board table -->
@@ -942,6 +944,7 @@ let currentColFilter = null;
 let currentColFilterTemp = {};
 let sortState = { col: 'orderDate', dir: -1 };
 let selectedOrders = new Set();
+let lastSelectedOrderId = null;
 let currentOrderId = null;
 let currentShipGroup = null;
 let pendingConflict = null; // { onChoice: fn(tag) } — ship group conflict dialog callback
@@ -1268,14 +1271,28 @@ function renderBoard() {
     else if (status === 'stored') rowClass += ' row-stored';
     else if (status === 'done' || status === 'delay') rowClass += ' row-done';
     tr.className = rowClass;
+    tr.dataset.oid = o.id;
     tr.onclick = e => {
-      if (e.ctrlKey || e.metaKey) {
+      if (e.shiftKey && lastSelectedOrderId) {
+        e.preventDefault();
+        const visibleIds = getVisibleOrderIds();
+        const a = visibleIds.indexOf(lastSelectedOrderId);
+        const b = visibleIds.indexOf(o.id);
+        if (a !== -1 && b !== -1) {
+          const [from, to] = a < b ? [a, b] : [b, a];
+          visibleIds.slice(from, to + 1).forEach(id => selectedOrders.add(id));
+        }
+        updateBulkBar();
+        renderBoard();
+      } else if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
+        lastSelectedOrderId = o.id;
         updateBulkBar();
         renderBoard();
       } else if (selectedOrders.size > 0) {
         selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
+        lastSelectedOrderId = o.id;
         updateBulkBar();
         renderBoard();
       } else {
@@ -2496,8 +2513,27 @@ async function commitBulkEdit(fields, shipTag) {
   await logActivity('update', 'order', 'bulk', `일괄 수정 ${updatedOrders.length}건`);
 }
 
+function getVisibleOrderIds() {
+  return [...document.querySelectorAll('#board-tbody tr.data-row')].map(tr => tr.dataset.oid).filter(Boolean);
+}
+
+async function bulkDelete() {
+  const count = selectedOrders.size;
+  if (!confirm(`선택한 ${count}건을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+  const ids = [...selectedOrders];
+  orders = orders.filter(o => !selectedOrders.has(o.id));
+  selectedOrders.clear();
+  lastSelectedOrderId = null;
+  updateBulkBar();
+  renderBoard();
+  showToast(`${count}건 삭제되었습니다`);
+  await Promise.all(ids.map(id => sb.from('orders').delete().eq('id', id)));
+  await logActivity('delete', 'order', ids.join(','), `발주 ${count}건 일괄 삭제`);
+}
+
 function clearSelection() {
   selectedOrders.clear();
+  lastSelectedOrderId = null;
   updateBulkBar();
   renderBoard();
 }
