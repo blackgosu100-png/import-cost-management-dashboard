@@ -1296,6 +1296,7 @@ function renderBoard() {
         updateBulkBar();
         renderBoard();
       } else {
+        lastSelectedOrderId = o.id;
         openDetailModal(o.id);
       }
     };
