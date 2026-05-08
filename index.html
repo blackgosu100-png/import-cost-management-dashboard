@@ -855,7 +855,21 @@ async function syncOrder(o) {
   });
 }
 
+async function uploadProductImage(imgData) {
+  if (!imgData || !imgData.startsWith('data:')) return imgData;
+  const blob = await (await fetch(imgData)).blob();
+  const filename = `product_${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('product-images').upload(filename, blob, {
+    contentType: 'image/jpeg', upsert: true,
+  });
+  if (error) throw error;
+  return sb.storage.from('product-images').getPublicUrl(filename).data.publicUrl;
+}
+
 async function syncProduct(p) {
+  if (p.imageUrl && p.imageUrl.startsWith('data:')) {
+    p.imageUrl = await uploadProductImage(p.imageUrl);
+  }
   const { error } = await sb.from('products').upsert({
     id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
     cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
