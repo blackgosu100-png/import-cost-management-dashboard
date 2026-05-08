@@ -111,7 +111,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .col-resizer { position: absolute; right: 0; top: 0; width: 5px; height: 100%; cursor: col-resize; z-index: 20; user-select: none; border-radius: 2px; }
 .col-resizer:hover, .col-resizer.resizing { background: var(--accent); opacity: .4; }
 .board-table thead th { position: sticky; top: 0; }
-.board-table { table-layout: fixed; }
+.board-table { table-layout: fixed; user-select: none; }
 
 /* Data rows */
 .board-table tbody tr.data-row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; height: 52px; background: #fff; }
