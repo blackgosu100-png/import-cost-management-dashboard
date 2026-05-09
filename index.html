@@ -626,6 +626,19 @@ th.col-filtered { color: var(--accent); }
           </div>
         </div>
       </div>
+      <hr class="form-divider">
+      <div class="form-section">
+        <div class="form-section-title">청구서 파일 보관</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--text2);font-weight:500">
+            &#8679; 청구서 업로드
+            <input type="file" id="c-invoice-file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:none" onchange="handleInvoiceUpload(event)">
+          </label>
+          <span style="font-size:11px;color:var(--text3)">PDF, JPG, PNG 지원</span>
+          <span id="c-invoice-uploading" style="display:none;font-size:11px;color:var(--info)">업로드 중...</span>
+        </div>
+        <div id="c-invoice-list"></div>
+      </div>
       <!-- 계산 중간값 표시 -->
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
         <div style="text-align:center">
@@ -907,7 +920,8 @@ async function loadData() {
       route: sg.route, freight: sg.freight, bl: sg.bl, doCharge: sg.do_charge,
       origin: sg.origin, inspectCny: sg.inspect_cny, inspectRate: sg.inspect_rate,
       customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
-      otherLogistics: sg.other_logistics||0, extraCost: sg.extra_cost, saved: sg.saved,
+      otherLogistics: sg.other_logistics||0, extraCost: sg.extra_cost,
+      invoiceFiles: sg.invoice_files||[], saved: sg.saved,
     };
   });
   saveCache();
@@ -953,7 +967,8 @@ async function syncShipGroup(key) {
     key, route: sg.route, freight: sg.freight, bl: sg.bl, do_charge: sg.doCharge,
     origin: sg.origin, inspect_cny: sg.inspectCny, inspect_rate: sg.inspectRate,
     customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
-    other_logistics: sg.otherLogistics||0, extra_cost: sg.extraCost, saved: sg.saved, updated_at: new Date().toISOString(),
+    other_logistics: sg.otherLogistics||0, extra_cost: sg.extraCost,
+    invoice_files: sg.invoiceFiles||[], saved: sg.saved, updated_at: new Date().toISOString(),
   });
 }
 
@@ -1534,6 +1549,14 @@ function renderCostView() {
                 <span style="font-family:var(--mono);font-size:11px;color:var(--text2)">${totalCbm > 0 ? totalCbm.toFixed(3) : '—'}</span>
               </div>
             </div>
+            ${(function() {
+              const invFiles = sg.invoiceFiles || [];
+              if (!invFiles.length) return '';
+              const links = invFiles.map(function(f) {
+                return '<a href="' + f.url + '" target="_blank" style="display:block;font-size:11px;color:var(--accent);text-decoration:none;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + f.name + '</a>';
+              }).join('');
+              return '<div style="background:var(--surface2);border-top:1px solid var(--border);padding:6px 12px"><div style="font-size:10px;color:var(--text3);font-weight:600;margin-bottom:3px">첨부 청구서</div>' + links + '</div>';
+            })()}
             <div style="padding:8px 12px;border-top:1px solid var(--border);text-align:center">
               <span style="font-size:10px;color:var(--text3)">✏️ 클릭하여 비용 수정</span>
             </div>
@@ -2074,6 +2097,7 @@ function openCostModal(key) {
   ];
   defaultEntries.forEach(e => addCostEntry(e));
   calcCostPreview();
+  renderInvoiceList();
   document.getElementById('cost-modal').classList.add('open');
 }
 
@@ -2249,6 +2273,59 @@ async function saveCost() {
   await syncShipGroup(currentShipGroup);
   await Promise.all(sgOrders.map(o => syncOrder(o)));
   await logActivity('update', 'ship_group', currentShipGroup, `원가 저장: ${getGroupName(currentShipGroup)}`);
+}
+
+// ─── 청구서 파일 관리 ────────────────────────────────────────
+function renderInvoiceList() {
+  const wrap = document.getElementById('c-invoice-list');
+  if (!wrap) return;
+  const sg = shipGroups[currentShipGroup];
+  const files = (sg && sg.invoiceFiles) ? sg.invoiceFiles : [];
+  if (files.length === 0) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:4px 0">첨부된 청구서가 없습니다</div>';
+    return;
+  }
+  const rows = files.map(function(f, i) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px">'
+      + '<a href="' + f.url + '" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + f.name + '">' + f.name + '</a>'
+      + '<span style="font-size:10px;color:var(--text3);flex-shrink:0">' + (f.date||'') + '</span>'
+      + '<button onclick="deleteInvoiceFile(' + i + ')" style="background:none;border:none;cursor:pointer;color:var(--text3);padding:2px 4px;font-size:16px;line-height:1" title="삭제">&times;</button>'
+      + '</div>';
+  });
+  wrap.innerHTML = rows.join('');
+}
+
+async function handleInvoiceUpload(e) {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+  const sg = shipGroups[currentShipGroup];
+  if (!sg.invoiceFiles) sg.invoiceFiles = [];
+  document.getElementById('c-invoice-uploading').style.display = 'inline';
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const safeName = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = currentShipGroup.replace(/::/g, '/') + '/' + safeName;
+    const { error } = await sb.storage.from('invoices').upload(path, file, {upsert: true});
+    if (error) { showToast('업로드 실패: ' + file.name); continue; }
+    const { data } = sb.storage.from('invoices').getPublicUrl(path);
+    sg.invoiceFiles.push({ name: file.name, path: path, url: data.publicUrl, date: today() });
+  }
+  document.getElementById('c-invoice-uploading').style.display = 'none';
+  e.target.value = '';
+  renderInvoiceList();
+  await syncShipGroup(currentShipGroup);
+  showToast('청구서가 저장되었습니다');
+}
+
+async function deleteInvoiceFile(idx) {
+  const sg = shipGroups[currentShipGroup];
+  if (!sg || !sg.invoiceFiles) return;
+  const f = sg.invoiceFiles[idx];
+  await sb.storage.from('invoices').remove([f.path]);
+  sg.invoiceFiles.splice(idx, 1);
+  renderInvoiceList();
+  await syncShipGroup(currentShipGroup);
+  showToast('청구서를 삭제했습니다');
 }
 
 // ─── 제품 등록/수정 모달 ─────────────────────────────────────
