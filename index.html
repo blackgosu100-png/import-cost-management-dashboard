@@ -2255,14 +2255,14 @@ async function saveCost() {
     else if (amt > 0) extraCosts.push({type, amount:amt, date, note});
   });
 
-  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, otherLogistics: extraCostsTotal, extraCost, saved:true});
-
   // Calculate per-unit cost
   const sgOrders = orders.filter(o => getGroupKey(o) === currentShipGroup);
   const inspectKrw = inspectCny * inspectRate;
   const shipping = freight + bl + doCharge + origin + inspectKrw;
   const custVatTotal = customs + vat; // 관세+부가세만 물건값 기준
   const extraCostsTotal = extraCosts.reduce((s, e) => s + e.amount, 0);
+
+  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, otherLogistics: extraCostsTotal, extraCost, saved:true});
   // 물류비 = 해운비 + 통관수수료 + 내륙운송비 + 기타항목 (사은품·전단지 등 개당비용은 제외)
   const totalLogistics = shipping + clearance + inland + extraCostsTotal;
   const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
