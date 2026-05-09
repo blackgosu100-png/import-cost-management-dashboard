@@ -875,7 +875,7 @@ async function loadData() {
       route: sg.route, freight: sg.freight, bl: sg.bl, doCharge: sg.do_charge,
       origin: sg.origin, inspectCny: sg.inspect_cny, inspectRate: sg.inspect_rate,
       customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
-      extraCost: sg.extra_cost, saved: sg.saved,
+      otherLogistics: sg.other_logistics||0, extraCost: sg.extra_cost, saved: sg.saved,
     };
   });
 }
@@ -920,7 +920,7 @@ async function syncShipGroup(key) {
     key, route: sg.route, freight: sg.freight, bl: sg.bl, do_charge: sg.doCharge,
     origin: sg.origin, inspect_cny: sg.inspectCny, inspect_rate: sg.inspectRate,
     customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
-    extra_cost: sg.extraCost, saved: sg.saved, updated_at: new Date().toISOString(),
+    other_logistics: sg.otherLogistics||0, extra_cost: sg.extraCost, saved: sg.saved, updated_at: new Date().toISOString(),
   });
 }
 
@@ -1362,7 +1362,7 @@ function getGroupName(key) {
 }
 function sgDomId(key) { return key.replace(/::/g,'--'); }
 function defaultCostEntry() {
-  return {route:'웨이하이→평택', freight:0, bl:0, doCharge:0, origin:0, inspectCny:0, inspectRate:219.63, customs:0, vat:0, clearance:0, inland:0, extraCost:0, saved:false};
+  return {route:'웨이하이→평택', freight:0, bl:0, doCharge:0, origin:0, inspectCny:0, inspectRate:219.63, customs:0, vat:0, clearance:0, inland:0, otherLogistics:0, extraCost:0, saved:false};
 }
 
 function toggleSheetDetail(domId) {
@@ -1403,7 +1403,7 @@ function renderCostView() {
     const inspectKrw = (sg.inspectCny||0) * (sg.inspectRate || 219.63);
     const shipping = (sg.freight||0)+(sg.bl||0)+(sg.doCharge||0)+(sg.origin||0)+inspectKrw;
     const custVat = (sg.customs||0)+(sg.vat||0); // 관세+부가세만
-    const totalLogistics = shipping + (sg.clearance||0) + (sg.inland||0) + (sg.extraCost||0);
+    const totalLogistics = shipping + (sg.clearance||0) + (sg.inland||0) + (sg.otherLogistics||0);
     const total = totalLogistics + custVat;
     const totalCbm = sgOrders.reduce((s,o)=>s+((getProduct(o.pid).cbm||0)*o.qty),0);
     const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
@@ -1471,9 +1471,10 @@ function renderCostView() {
             ${detailRow('부가세', sg.vat)}
             ${detailRow('통관수수료', sg.clearance)}
             ${detailRow('한국 내륙운송비', sg.inland)}
+            ${(sg.otherLogistics||0) > 0 ? detailRow('기타 항목 합계', sg.otherLogistics) : ''}
             <div style="padding:6px 12px;display:flex;justify-content:space-between;background:var(--accent-bg);border-bottom:2px solid var(--accent-border)">
               <span style="font-size:11px;font-weight:700;color:var(--accent)">2차 소계</span>
-              <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent)">${hasCost ? fmt(custVat+(sg.clearance||0)+(sg.inland||0)) : '—'}</span>
+              <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent)">${hasCost ? fmt(custVat+(sg.clearance||0)+(sg.inland||0)+(sg.otherLogistics||0)) : '—'}</span>
             </div>
 
             <div style="padding:10px 12px;background:var(--text);display:flex;justify-content:space-between;align-items:center">
@@ -2112,7 +2113,7 @@ function calcCostPreview() {
 
   const extraCost = parseFloat(document.getElementById('c-extra').value)||0;
   // 물류비 = 해운비 + (통관수수료+내륙운송비+기타 항목) + 기타비용
-  const totalLogistics = shipping + logisticEntries + extraCost;
+  const totalLogistics = shipping + logisticEntries;
   const grand = totalLogistics + custVat;
   document.getElementById('c-grand-total').textContent = fmt(grand);
 
@@ -2182,7 +2183,7 @@ async function saveCost() {
     else if (amt > 0) extraCosts.push({type, amount:amt, date, note});
   });
 
-  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, extraCost, saved:true});
+  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, otherLogistics: extraCostsTotal, extraCost, saved:true});
 
   // Calculate per-unit cost
   const sgOrders = orders.filter(o => getGroupKey(o) === currentShipGroup);
@@ -2190,8 +2191,8 @@ async function saveCost() {
   const shipping = freight + bl + doCharge + origin + inspectKrw;
   const custVatTotal = customs + vat; // 관세+부가세만 물건값 기준
   const extraCostsTotal = extraCosts.reduce((s, e) => s + e.amount, 0);
-  // 물류비 = 해운비 + 통관수수료 + 내륙운송비 + 기타항목 + 기타비용
-  const totalLogistics = shipping + clearance + inland + extraCostsTotal + extraCost;
+  // 물류비 = 해운비 + 통관수수료 + 내륙운송비 + 기타항목 (사은품·전단지 등 개당비용은 제외)
+  const totalLogistics = shipping + clearance + inland + extraCostsTotal;
   const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
   const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
   // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료)
