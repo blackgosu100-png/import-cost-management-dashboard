@@ -498,8 +498,17 @@ th.col-filtered { color: var(--accent); }
               <span style="font-size:10px;color:var(--text3);font-weight:500">수량 *</span>
               <span style="font-size:10px;color:var(--text3);font-weight:500">위안단가(¥) *</span>
               <span style="font-size:10px;color:var(--text3);font-weight:500">차수</span>
+              <span></span>
             </div>
             <div id="o-option-rows-body"></div>
+            <!-- 공통 추가비용 -->
+            <div id="o-common-extra-wrap" style="display:none;border-top:2px dashed var(--border);padding:8px 10px;background:var(--surface2)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <span style="font-size:11px;font-weight:600;color:var(--text2)">공통 추가비용 <span style="font-weight:400;color:var(--text3)">(모든 옵션에 동일 적용, 개당 ₩)</span></span>
+                <button type="button" onclick="addCommonExtra()" style="font-size:10px;color:var(--accent);background:none;border:none;cursor:pointer">+ 항목 추가</button>
+              </div>
+              <div id="o-common-extra-list"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1756,16 +1765,74 @@ function onOptionSelect() {
     const lastSeq = prevOrders.length > 0 && prevOrders[0].orderSeq ? prevOrders[0].orderSeq : '';
     const lastPrice = prevOrders.length > 0 ? prevOrders[0].price : '';
     const pricePlaceholder = lastPrice ? `최근 ¥${lastPrice}` : '단가(¥)';
-    return `<div style="display:grid;grid-template-columns:1fr 90px 90px 90px;align-items:center;border-bottom:1px solid var(--border);padding:4px 10px;gap:6px">
-      <span style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.option}</span>
-      <input class="form-input" style="padding:4px 7px;font-size:11px" type="number" placeholder="수량" id="orow-qty-${pid}">
-      <input class="form-input" style="padding:4px 7px;font-size:11px;font-family:var(--mono)" type="number" placeholder="${pricePlaceholder}" id="orow-price-${pid}" value="${lastPrice}">
-      <input class="form-input" style="padding:4px 7px;font-size:11px" placeholder="차수" id="orow-seq-${pid}" value="" ${lastSeq ? `title="직전 차수: ${lastSeq}"` : ''}>
+    return `<div style="border-bottom:1px solid var(--border)">
+      <div style="display:grid;grid-template-columns:1fr 90px 90px 90px 80px;align-items:center;padding:4px 10px;gap:6px">
+        <span style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.option}</span>
+        <input class="form-input" style="padding:4px 7px;font-size:11px" type="number" placeholder="수량" id="orow-qty-${pid}">
+        <input class="form-input" style="padding:4px 7px;font-size:11px;font-family:var(--mono)" type="number" placeholder="${pricePlaceholder}" id="orow-price-${pid}" value="${lastPrice}">
+        <input class="form-input" style="padding:4px 7px;font-size:11px" placeholder="차수" id="orow-seq-${pid}" value="" ${lastSeq ? `title="직전 차수: ${lastSeq}"` : ''}>
+        <button type="button" onclick="toggleRowExtra('${pid}')" style="font-size:10px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;color:var(--text3);white-space:nowrap">+ 추가비용</button>
+      </div>
+      <div id="orow-extra-${pid}" style="display:none;padding:4px 10px 8px;background:var(--surface2)">
+        <div style="font-size:10px;color:var(--text3);margin-bottom:4px">이 옵션 전용 추가비용 (개당 ₩)</div>
+        <div id="orow-extra-list-${pid}"></div>
+        <button type="button" onclick="addRowExtra('${pid}')" style="font-size:10px;color:var(--accent);background:none;border:none;cursor:pointer;padding:2px 0">+ 항목 추가</button>
+      </div>
     </div>`;
   }).join('');
+
+  // 공통 추가비용 섹션 초기화
+  const commonWrap = document.getElementById('o-common-extra-wrap');
+  if (commonWrap) {
+    document.getElementById('o-common-extra-list').innerHTML = '';
+    document.getElementById('o-common-extra-wrap').style.display = '';
+  }
 }
 
 function calcOrderPreview() {}
+
+function toggleRowExtra(pid) {
+  const el = document.getElementById('orow-extra-' + pid);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? '' : 'none';
+  if (open && document.getElementById('orow-extra-list-' + pid).children.length === 0) addRowExtra(pid);
+}
+
+function addRowExtra(pid) {
+  const list = document.getElementById('orow-extra-list-' + pid);
+  if (!list) return;
+  const i = list.children.length;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 100px 24px;gap:4px;margin-bottom:4px;align-items:center';
+  row.innerHTML = '<input class="form-input" style="padding:4px 7px;font-size:11px" placeholder="항목명 (예: KC배터리)">'
+    + '<input class="form-input" style="padding:4px 7px;font-size:11px;font-family:var(--mono)" type="number" placeholder="개당 ₩">'
+    + '<button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1">&times;</button>';
+  list.appendChild(row);
+}
+
+function addCommonExtra() {
+  const list = document.getElementById('o-common-extra-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 100px 24px;gap:4px;margin-bottom:4px;align-items:center';
+  row.innerHTML = '<input class="form-input" style="padding:4px 7px;font-size:11px" placeholder="항목명 (예: 스티커)">'
+    + '<input class="form-input" style="padding:4px 7px;font-size:11px;font-family:var(--mono)" type="number" placeholder="개당 ₩">'
+    + '<button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1">&times;</button>';
+  list.appendChild(row);
+}
+
+function getExtraRowsFromList(listEl) {
+  const result = [];
+  if (!listEl) return result;
+  Array.from(listEl.children).forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const type = inputs[0]?.value.trim();
+    const amount = parseFloat(inputs[1]?.value) || 0;
+    if (type && amount > 0) result.push({ type, amount, date: today() });
+  });
+  return result;
+}
 
 async function fetchExchangeRate() {
   const dateVal = document.getElementById('o-date').value;
@@ -1873,13 +1940,16 @@ function saveOrder() {
 
 async function commitOrderSave({ selected, rate, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag }) {
   const newOrders = [];
+  const commonExtras = getExtraRowsFromList(document.getElementById('o-common-extra-list'));
   selected.forEach(pid => {
     const qty = parseFloat(document.getElementById('orow-qty-' + pid)?.value);
     const price = parseFloat(document.getElementById('orow-price-' + pid)?.value);
     if (!qty || !price) return;
     const orderSeq = document.getElementById('orow-seq-' + pid)?.value.trim() || '';
+    const rowExtras = getExtraRowsFromList(document.getElementById('orow-extra-list-' + pid));
+    const extraCosts = [...commonExtras, ...rowExtras];
     const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    const o = { id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, orderSeq, costPerUnit: null, extraCosts: [], status: 'active' };
+    const o = { id: newId, pid, qty, rate, price, orderDate, factoryDate, whDate, shipDate, arriveDate, shipTag, orderSeq, costPerUnit: null, extraCosts, status: 'active' };
     orders.unshift(o);
     newOrders.push(o);
   });
