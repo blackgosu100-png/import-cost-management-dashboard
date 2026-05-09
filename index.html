@@ -1872,10 +1872,13 @@ async function commitOrderSave({ selected, rate, orderDate, factoryDate, whDate,
   });
   if (newOrders.length === 0) { showToast('수량과 단가를 입력해주세요'); return; }
   closeModal('order-modal');
+  saveCache(); // 메모리 → 캐시 즉시 저장 (새로고침해도 복구 가능)
   renderBoard();
-  showToast(`${newOrders.length}건 발주가 등록되었습니다`);
+  showToast(`${newOrders.length}건 저장 중...`);
   await Promise.all(newOrders.map(o => syncOrder(o)));
   await logActivity('create', 'order', newOrders.map(o=>o.id).join(','), `발주 ${newOrders.length}건 등록`);
+  saveCache(); // DB 저장 완료 후 캐시 갱신
+  showToast(`${newOrders.length}건 발주가 등록되었습니다 ✓`);
 }
 
 // ─── 상세 모달 ────────────────────────────────────────────────
@@ -2280,11 +2283,14 @@ async function saveCost() {
   });
 
   closeModal('cost-modal');
+  saveCache();
   renderBoard();
-  showToast('원가가 저장되었습니다');
+  showToast('원가 저장 중...');
   await syncShipGroup(currentShipGroup);
   await Promise.all(sgOrders.map(o => syncOrder(o)));
   await logActivity('update', 'ship_group', currentShipGroup, `원가 저장: ${getGroupName(currentShipGroup)}`);
+  saveCache();
+  showToast('원가가 저장되었습니다 ✓');
 }
 
 // ─── 청구서 파일 관리 ────────────────────────────────────────
