@@ -1565,13 +1565,12 @@ function renderCostView() {
           <!-- 우측: 제품별 원가 테이블 -->
           <div style="background:var(--surface)">
             <div style="padding:7px 14px;background:var(--text);color:#fafafa;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">제품별 개당 도착원가</div>
-            <div style="display:grid;grid-template-columns:1fr 74px 74px 74px 84px 64px;padding:6px 14px;background:var(--surface2);border-bottom:1px solid var(--border)">
+            <div style="display:grid;grid-template-columns:1fr 74px 74px 74px 84px;padding:6px 14px;background:var(--surface2);border-bottom:1px solid var(--border)">
               <div style="font-size:10px;color:var(--text3);font-weight:600">제품 / 옵션</div>
               <div style="font-size:10px;color:var(--text2);font-weight:600;text-align:right">물건값</div>
               <div style="font-size:10px;color:var(--info);font-weight:600;text-align:right">물류비</div>
               <div style="font-size:10px;color:var(--warn);font-weight:600;text-align:right">관부가세</div>
               <div style="font-size:10px;color:var(--accent);font-weight:700;text-align:right">도착원가</div>
-              <div style="font-size:10px;color:var(--text3);font-weight:600;text-align:right">¥배수</div>
             </div>
             ${sgOrders.map(o => {
               const p = getProduct(o.pid);
@@ -1579,17 +1578,27 @@ function renderCostView() {
               const logistic = cbmRate * (p.cbm||0);
               const vatAmt = vatRate * goodVal;
               const total = goodVal + logistic + vatAmt;
-              const yenMult = (hasCost && o.price > 0) ? (total / o.price).toFixed(2) : null;
-              return `<div style="display:grid;grid-template-columns:1fr 74px 74px 74px 84px 64px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center">
+              const logisticPct = (hasCost && total > 0) ? (logistic/total*100).toFixed(1)+'%' : null;
+              const vatPct = (hasCost && total > 0) ? (vatAmt/total*100).toFixed(1)+'%' : null;
+              const yenMult = (hasCost && o.price > 0) ? (total/o.price).toFixed(2)+'×' : null;
+              return `<div style="display:grid;grid-template-columns:1fr 74px 74px 74px 84px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center">
                 <div>
                   <div style="font-size:12px;font-weight:600;color:var(--text)">${p.name}</div>
                   <div style="font-size:10px;color:var(--text3);margin-top:1px">${p.option} · ${o.qty}개 · ¥${o.price} × ${o.rate}</div>
                 </div>
-                <div style="font-family:var(--mono);font-size:11px;color:var(--text2);text-align:right">${hasCost ? fmt(Math.round(goodVal)) : '—'}</div>
-                <div style="font-family:var(--mono);font-size:11px;color:var(--info);text-align:right">${hasCost && cbmRate > 0 ? fmt(Math.round(logistic)) : '—'}</div>
-                <div style="font-family:var(--mono);font-size:11px;color:var(--warn);text-align:right">${hasCost && vatRate > 0 ? fmt(Math.round(vatAmt)) : '—'}</div>
-                <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:${hasCost?'var(--accent)':'var(--text3)'};text-align:right">${hasCost ? fmt(Math.round(total)) : '—'}</div>
-                <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text3);text-align:right" title="도착원가 ÷ 위안단가">${yenMult ? yenMult+'×' : '—'}</div>
+                <div style="text-align:right"><span style="font-family:var(--mono);font-size:11px;color:var(--text2)">${hasCost ? fmt(Math.round(goodVal)) : '—'}</span></div>
+                <div style="text-align:right">
+                  <span style="font-family:var(--mono);font-size:11px;color:var(--info)">${hasCost && cbmRate > 0 ? fmt(Math.round(logistic)) : '—'}</span>
+                  ${logisticPct ? '<div style="font-size:9px;color:var(--info);opacity:.7">'+logisticPct+'</div>' : ''}
+                </div>
+                <div style="text-align:right">
+                  <span style="font-family:var(--mono);font-size:11px;color:var(--warn)">${hasCost && vatRate > 0 ? fmt(Math.round(vatAmt)) : '—'}</span>
+                  ${vatPct ? '<div style="font-size:9px;color:var(--warn);opacity:.7">'+vatPct+'</div>' : ''}
+                </div>
+                <div style="text-align:right">
+                  <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:${hasCost?'var(--accent)':'var(--text3)'}">${hasCost ? fmt(Math.round(total)) : '—'}</span>
+                  ${yenMult ? '<div style="font-size:9px;color:var(--text3)">'+yenMult+'</div>' : ''}
+                </div>
               </div>`;
             }).join('')}
           </div>
