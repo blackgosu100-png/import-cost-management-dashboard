@@ -1792,7 +1792,7 @@ async function fetchExchangeRate() {
 }
 
 function showShipConflictModal(shipDate, unconfKey, onChoice) {
-  pendingConflict = { onChoice };
+  pendingConflict = { onChoice, shipDate };
   const d = shipDate.slice(2).replace(/-/g, '-');
   document.getElementById('ship-conflict-msg').innerHTML =
     `<strong>${d} 선적</strong>은 이미 원가가 확정된 그룹입니다.<br>새 발주를 어디에 추가할까요?`;
@@ -1801,12 +1801,19 @@ function showShipConflictModal(shipDate, unconfKey, onChoice) {
   while (shipGroups[`${shipDate}::${seq}`] !== undefined) seq++;
 
   let html = '';
+  // 기존 확정 그룹에 추가 (원가 재계산 필요 안내)
+  html += `<button onclick="confirmShipGroup('')" style="
+    display:block;width:100%;padding:12px 16px;text-align:left;cursor:pointer;
+    background:var(--surface);color:var(--text);border:2px solid var(--accent);border-radius:var(--radius);font-family:var(--sans);font-size:13px;font-weight:500;line-height:1.5;margin-bottom:6px">
+    기존 확정 그룹에 추가
+    <span style="display:block;font-size:11px;font-weight:400;color:var(--warn);margin-top:2px">원가 확정 해제됨 — 원가 재입력 필요</span>
+  </button>`;
   if (unconfKey) {
     const tag = unconfKey.split('::')[1];
     const gname = getGroupName(unconfKey);
     html += `<button onclick="confirmShipGroup('${tag}')" style="
       display:block;width:100%;padding:12px 16px;text-align:left;cursor:pointer;
-      background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-family:var(--sans);font-size:13px;font-weight:500;line-height:1.5">
+      background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-family:var(--sans);font-size:13px;font-weight:500;line-height:1.5;margin-bottom:6px">
       기존 미입력 그룹에 합치기
       <span style="display:block;font-size:11px;font-weight:400;opacity:.85;margin-top:2px">${gname}</span>
     </button>`;
@@ -1825,8 +1832,14 @@ function showShipConflictModal(shipDate, unconfKey, onChoice) {
 function confirmShipGroup(tag) {
   closeModal('ship-conflict-modal');
   if (pendingConflict) {
+    const shipDate = pendingConflict.shipDate;
     const cb = pendingConflict.onChoice;
     pendingConflict = null;
+    // 기존 확정 그룹에 추가 선택 시 원가 확정 해제
+    if (tag === '' && shipDate && shipGroups[shipDate]) {
+      shipGroups[shipDate].saved = false;
+      syncShipGroup(shipDate);
+    }
     cb(String(tag));
   }
 }
