@@ -626,20 +626,6 @@ th.col-filtered { color: var(--accent); }
           </div>
         </div>
       </div>
-      <hr class="form-divider">
-      <div class="form-section">
-        <div class="form-section-title">청구서 파일 보관</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--text2);font-weight:500">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            청구서 업로드
-            <input type="file" id="c-invoice-file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:none" onchange="handleInvoiceUpload(event)">
-          </label>
-          <span style="font-size:11px;color:var(--text3)">PDF, JPG, PNG 지원</span>
-          <span id="c-invoice-uploading" style="display:none;font-size:11px;color:var(--info)">업로드 중...</span>
-        </div>
-        <div id="c-invoice-list" style="display:flex;flex-direction:column;gap:4px"></div>
-      </div>
       <!-- 계산 중간값 표시 -->
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
         <div style="text-align:center">
@@ -890,7 +876,6 @@ async function loadData() {
       origin: sg.origin, inspectCny: sg.inspect_cny, inspectRate: sg.inspect_rate,
       customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
       otherLogistics: sg.other_logistics||0, extraCost: sg.extra_cost, saved: sg.saved,
-      invoiceFiles: sg.invoice_files||[],
     };
   });
 }
@@ -935,7 +920,7 @@ async function syncShipGroup(key) {
     key, route: sg.route, freight: sg.freight, bl: sg.bl, do_charge: sg.doCharge,
     origin: sg.origin, inspect_cny: sg.inspectCny, inspect_rate: sg.inspectRate,
     customs: sg.customs, vat: sg.vat, clearance: sg.clearance, inland: sg.inland,
-    other_logistics: sg.otherLogistics||0, extra_cost: sg.extraCost, invoice_files: sg.invoiceFiles||[], saved: sg.saved, updated_at: new Date().toISOString(),
+    other_logistics: sg.otherLogistics||0, extra_cost: sg.extraCost, saved: sg.saved, updated_at: new Date().toISOString(),
   });
 }
 
@@ -1516,15 +1501,6 @@ function renderCostView() {
                 <span style="font-family:var(--mono);font-size:11px;color:var(--text2)">${totalCbm > 0 ? totalCbm.toFixed(3) : '—'}</span>
               </div>
             </div>
-            ${(sg.invoiceFiles||[]).length > 0 ? `
-            <div style="background:var(--surface2);border-top:1px solid var(--border);padding:6px 12px">
-              <div style="font-size:10px;color:var(--text3);font-weight:600;margin-bottom:4px">첨부 청구서</div>
-              ${(sg.invoiceFiles||[]).map(f => `
-                <a href="${f.url}" target="_blank" style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--accent);text-decoration:none;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  ${f.name}
-                </a>`).join('')}
-            </div>` : ''}
             <div style="padding:8px 12px;border-top:1px solid var(--border);text-align:center">
               <span style="font-size:10px;color:var(--text3)">✏️ 클릭하여 비용 수정</span>
             </div>
@@ -2065,7 +2041,6 @@ function openCostModal(key) {
   ];
   defaultEntries.forEach(e => addCostEntry(e));
   calcCostPreview();
-  renderInvoiceList();
   document.getElementById('cost-modal').classList.add('open');
 }
 
@@ -2241,58 +2216,6 @@ async function saveCost() {
   await syncShipGroup(currentShipGroup);
   await Promise.all(sgOrders.map(o => syncOrder(o)));
   await logActivity('update', 'ship_group', currentShipGroup, `원가 저장: ${getGroupName(currentShipGroup)}`);
-}
-
-// ─── 청구서 파일 관리 ────────────────────────────────────────
-function renderInvoiceList() {
-  const sg = shipGroups[currentShipGroup];
-  const files = sg?.invoiceFiles || [];
-  const wrap = document.getElementById('c-invoice-list');
-  if (!wrap) return;
-  if (files.length === 0) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:4px 0">첨부된 청구서가 없습니다</div>';
-    return;
-  }
-  wrap.innerHTML = files.map((f, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius)">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text3);flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      <a href="${f.url}" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.name}">${f.name}</a>
-      <span style="font-size:10px;color:var(--text3);flex-shrink:0">${f.date||''}</span>
-      <button onclick="deleteInvoiceFile(${i})" style="background:none;border:none;cursor:pointer;color:var(--text3);padding:2px;line-height:1;font-size:14px" title="삭제">×</button>
-    </div>
-  `).join('');
-}
-
-async function handleInvoiceUpload(e) {
-  const files = Array.from(e.target.files);
-  if (!files.length) return;
-  const sg = shipGroups[currentShipGroup];
-  if (!sg.invoiceFiles) sg.invoiceFiles = [];
-  document.getElementById('c-invoice-uploading').style.display = 'inline';
-  for (const file of files) {
-    const safeName = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._\-가-힣]/g, '_');
-    const path = currentShipGroup.replace(/::/g, '/') + '/' + safeName;
-    const { error } = await sb.storage.from('invoices').upload(path, file, {upsert: true});
-    if (error) { showToast('업로드 실패: ' + file.name); continue; }
-    const { data } = sb.storage.from('invoices').getPublicUrl(path);
-    sg.invoiceFiles.push({ name: file.name, path, url: data.publicUrl, date: today() });
-  }
-  document.getElementById('c-invoice-uploading').style.display = 'none';
-  e.target.value = '';
-  renderInvoiceList();
-  await syncShipGroup(currentShipGroup);
-  showToast('청구서가 저장되었습니다');
-}
-
-async function deleteInvoiceFile(idx) {
-  const sg = shipGroups[currentShipGroup];
-  if (!sg.invoiceFiles) return;
-  const f = sg.invoiceFiles[idx];
-  await sb.storage.from('invoices').remove([f.path]);
-  sg.invoiceFiles.splice(idx, 1);
-  renderInvoiceList();
-  await syncShipGroup(currentShipGroup);
-  showToast('청구서를 삭제했습니다');
 }
 
 // ─── 제품 등록/수정 모달 ─────────────────────────────────────
