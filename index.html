@@ -2447,27 +2447,33 @@ async function saveProduct() {
   if (currentEditProductId) {
     const p = products.find(p => p.id === currentEditProductId);
     Object.assign(p, data);
+    closeModal('product-modal');
+    saveCache();
+    renderProductView();
+    renderBoard();
+    showToast('저장 중...');
     try {
       await syncProduct(p);
     } catch(e) {
       showToast('저장 실패: ' + (e.message || e)); console.error('syncProduct error', e); return;
     }
-    closeModal('product-modal');
-    renderProductView();
-    renderBoard();
-    showToast('제품이 수정되었습니다');
+    saveCache();
+    showToast('제품이 수정되었습니다 ✓');
     await logActivity('update', 'product', p.id, `제품 수정: ${p.name} - ${p.option}`);
   } else {
     const newP = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), ...data };
+    products.push(newP);
+    closeModal('product-modal');
+    saveCache();
+    renderProductView();
+    showToast('저장 중...');
     try {
       await syncProduct(newP);
     } catch(e) {
       showToast('저장 실패: ' + (e.message || e)); console.error('syncProduct error', e); return;
     }
-    products.push(newP);
-    closeModal('product-modal');
-    renderProductView();
-    showToast('제품이 등록되었습니다');
+    saveCache();
+    showToast('제품이 등록되었습니다 ✓');
     await logActivity('create', 'product', newP.id, `제품 등록: ${newP.name} - ${newP.option}`);
   }
 }
