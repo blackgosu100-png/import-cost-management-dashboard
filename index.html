@@ -1402,12 +1402,14 @@ function renderCostView() {
     const sgOrders = groupMap[key];
     const inspectKrw = (sg.inspectCny||0) * (sg.inspectRate || 219.63);
     const shipping = (sg.freight||0)+(sg.bl||0)+(sg.doCharge||0)+(sg.origin||0)+inspectKrw;
-    const customs = (sg.customs||0)+(sg.vat||0)+(sg.clearance||0)+(sg.inland||0);
-    const total = shipping + customs + (sg.extraCost||0);
+    const custVat = (sg.customs||0)+(sg.vat||0); // 관세+부가세만
+    const totalLogistics = shipping + (sg.clearance||0) + (sg.inland||0) + (sg.extraCost||0);
+    const total = totalLogistics + custVat;
     const totalCbm = sgOrders.reduce((s,o)=>s+((getProduct(o.pid).cbm||0)*o.qty),0);
-    const cbmRate = totalCbm > 0 ? shipping / totalCbm : 0;
-    const totalGoodVal = sgOrders.reduce((s,o)=>s+(o.qty*o.rate*o.price),0);
-    const vatRate = totalGoodVal > 0 ? customs / totalGoodVal : 0;
+    const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
+    // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료)
+    const totalGoodVal = sgOrders.reduce((s,o)=>s+(o.qty*o.rate*o.price*1.0396),0);
+    const vatRate = totalGoodVal > 0 ? custVat / totalGoodVal : 0;
     const totalQty = sgOrders.reduce((s,o)=>s+o.qty,0)||1;
     const hasCost = sg.saved;
     const name = getGroupName(key);
@@ -1438,7 +1440,7 @@ function renderCostView() {
       <div id="sg-summary-${domId}" style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px;background:var(--surface2);border-bottom:1px solid var(--border)">
         ${sgOrders.map(o => {
           const p = getProduct(o.pid);
-          const totalPerUnit = (o.rate*o.price) + cbmRate*(p.cbm||0) + vatRate*(o.rate*o.price) + (sg.extraCost||0)/totalQty;
+          const totalPerUnit = (o.rate*o.price*1.0396) + cbmRate*(p.cbm||0) + vatRate*(o.rate*o.price*1.0396);
           return `<div style="font-size:12px;display:flex;align-items:center;gap:6px">
             <span style="color:var(--text2);font-weight:500">${p.name}</span>
             <span style="color:var(--text3)">${p.option}</span>
@@ -1471,7 +1473,7 @@ function renderCostView() {
             ${detailRow('한국 내륙운송비', sg.inland)}
             <div style="padding:6px 12px;display:flex;justify-content:space-between;background:var(--accent-bg);border-bottom:2px solid var(--accent-border)">
               <span style="font-size:11px;font-weight:700;color:var(--accent)">2차 소계</span>
-              <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent)">${hasCost ? fmt(customs) : '—'}</span>
+              <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent)">${hasCost ? fmt(custVat+(sg.clearance||0)+(sg.inland||0)) : '—'}</span>
             </div>
 
             <div style="padding:10px 12px;background:var(--text);display:flex;justify-content:space-between;align-items:center">
@@ -1515,11 +1517,10 @@ function renderCostView() {
             </div>
             ${sgOrders.map(o => {
               const p = getProduct(o.pid);
-              const goodVal = o.rate * o.price;
+              const goodVal = o.rate * o.price * 1.0396;
               const logistic = cbmRate * (p.cbm||0);
               const vatAmt = vatRate * goodVal;
-              const extraPer = (sg.extraCost||0) / totalQty;
-              const total = goodVal + logistic + vatAmt + extraPer;
+              const total = goodVal + logistic + vatAmt;
               return `<div style="display:grid;grid-template-columns:1fr 74px 74px 74px 84px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center">
                 <div>
                   <div style="font-size:12px;font-weight:600;color:var(--text)">${p.name}</div>
@@ -1836,7 +1837,7 @@ function openDetailModal(oid) {
       </div>
       <div style="margin-top:8px;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:var(--radius);padding:8px 12px;display:flex;justify-content:space-between;font-size:12px;color:var(--accent)">
         <span>물건값 (원화)</span>
-        <span style="font-family:var(--mono);font-weight:600">${fmt(o.qty * o.rate * o.price)}</span>
+        <span style="font-family:var(--mono);font-weight:600">${fmt(Math.round(o.qty * o.rate * o.price * 1.0396))}</span>
       </div>
     </div>
     <hr class="form-divider">
@@ -2098,47 +2099,56 @@ function calcCostPreview() {
   const shipping = freight + bl + doCharge + origin + inspectKrw;
   document.getElementById('c-shipping-total').textContent = fmt(shipping);
 
-  // Customs entries
-  let customs = 0;
-  document.querySelectorAll('[id^="ce-amt-"]').forEach(el => { customs += parseFloat(el.value)||0; });
-  document.getElementById('c-customs-total').textContent = fmt(customs);
+  // 통관 항목: 관세+부가세 = 관부가세, 나머지는 물류비
+  let custVat = 0, logisticEntries = 0;
+  document.querySelectorAll('[id^="ce-amt-"]').forEach(el => {
+    const id = el.id.replace('ce-amt-','');
+    const type = document.getElementById('ce-type-'+id)?.value;
+    const amt = parseFloat(el.value)||0;
+    if (type==='관세' || type==='부가세') custVat += amt;
+    else logisticEntries += amt;
+  });
+  document.getElementById('c-customs-total').textContent = fmt(custVat + logisticEntries);
 
   const extraCost = parseFloat(document.getElementById('c-extra').value)||0;
-  const grand = shipping + customs + extraCost;
+  // 물류비 = 해운비 + (통관수수료+내륙운송비+기타 항목) + 기타비용
+  const totalLogistics = shipping + logisticEntries + extraCost;
+  const grand = totalLogistics + custVat;
   document.getElementById('c-grand-total').textContent = fmt(grand);
 
   // Per-unit calculation
   const sgOrders = orders.filter(o => getGroupKey(o) === currentShipGroup);
   const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
-  const cbmRate = totalCbm > 0 ? shipping / totalCbm : 0;
-  const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price), 0);
-  const vatRate = totalGoodVal > 0 ? customs / totalGoodVal : 0;
+  const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
+  // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료 포함)
+  const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price * 1.0396), 0);
+  // 관부가세율 = 관부가세 ÷ 물건값합계
+  const vatRate = totalGoodVal > 0 ? custVat / totalGoodVal : 0;
   const totalQty = sgOrders.reduce((s,o)=>s+o.qty,0)||1;
 
   // 중간값 표시
   document.getElementById('c-cbm-rate').textContent = cbmRate > 0 ? fmt(cbmRate) + '/CBM' : '—';
-  document.getElementById('c-cbm-detail').textContent = shipping > 0 ? fmt(shipping) + ' ÷ ' + totalCbm.toFixed(3) + 'CBM' : '총물류비 ÷ 총CBM';
+  document.getElementById('c-cbm-detail').textContent = totalLogistics > 0 ? fmt(totalLogistics) + ' ÷ ' + totalCbm.toFixed(3) + 'CBM' : '총물류비 ÷ 총CBM';
   document.getElementById('c-vat-rate').textContent = vatRate > 0 ? (vatRate*100).toFixed(2) + '%' : '—';
-  document.getElementById('c-vat-detail').textContent = (customs > 0 && totalGoodVal > 0) ? fmt(customs) + ' ÷ ' + fmt(totalGoodVal) : '통관비 ÷ 물건값합계';
+  document.getElementById('c-vat-detail').textContent = (custVat > 0 && totalGoodVal > 0) ? fmt(custVat) + ' ÷ ' + fmt(totalGoodVal) : '관부가세 ÷ 물건값합계';
   document.getElementById('c-goods-total').textContent = totalGoodVal > 0 ? fmt(totalGoodVal) : '—';
   document.getElementById('c-cbm-used').textContent = '총CBM: ' + (totalCbm > 0 ? totalCbm.toFixed(3) : '—');
 
   let resultHtml = '';
   sgOrders.forEach(o => {
     const p = getProduct(o.pid);
-    const goodValPerUnit = o.rate * o.price;
+    const goodValPerUnit = o.rate * o.price * 1.0396;
     const logisticPerUnit = cbmRate * (p.cbm || 0);
     const vatPerUnit = vatRate * goodValPerUnit;
-    const extraPerUnit = extraCost / totalQty;
-    const totalPerUnit = goodValPerUnit + logisticPerUnit + vatPerUnit + extraPerUnit;
+    const totalPerUnit = goodValPerUnit + logisticPerUnit + vatPerUnit;
     resultHtml += `<div style="display:grid;grid-template-columns:1fr 70px 70px 70px 80px;gap:0;padding:5px 4px;border-bottom:1px solid var(--accent-border);font-size:12px;align-items:center">
       <div>
         <div style="font-weight:600;color:var(--text);font-size:11px">${p.name}</div>
         <div style="color:var(--text3);font-size:10px">${p.option} · ${o.qty}개</div>
       </div>
-      <div style="font-family:var(--mono);font-size:11px;color:var(--text2);text-align:right">${fmt(goodValPerUnit)}</div>
-      <div style="font-family:var(--mono);font-size:11px;color:var(--info);text-align:right">${fmt(logisticPerUnit)}</div>
-      <div style="font-family:var(--mono);font-size:11px;color:var(--warn);text-align:right">${fmt(vatPerUnit)}</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text2);text-align:right">${fmt(Math.round(goodValPerUnit))}</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--info);text-align:right">${fmt(Math.round(logisticPerUnit))}</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--warn);text-align:right">${fmt(Math.round(vatPerUnit))}</div>
       <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);text-align:right">${fmt(Math.round(totalPerUnit))}</div>
     </div>`;
   });
@@ -2178,19 +2188,23 @@ async function saveCost() {
   const sgOrders = orders.filter(o => getGroupKey(o) === currentShipGroup);
   const inspectKrw = inspectCny * inspectRate;
   const shipping = freight + bl + doCharge + origin + inspectKrw;
-  const totalCustoms = customs + vat + clearance + inland;
+  const custVatTotal = customs + vat; // 관세+부가세만 물건값 기준
+  const extraCostsTotal = extraCosts.reduce((s, e) => s + e.amount, 0);
+  // 물류비 = 해운비 + 통관수수료 + 내륙운송비 + 기타항목 + 기타비용
+  const totalLogistics = shipping + clearance + inland + extraCostsTotal + extraCost;
   const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
-  const cbmRate = totalCbm > 0 ? shipping / totalCbm : 0;
-  const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price), 0);
-  const vatRate = totalGoodVal > 0 ? totalCustoms / totalGoodVal : 0;
+  const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
+  // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료)
+  const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price * 1.0396), 0);
+  const vatRate = totalGoodVal > 0 ? custVatTotal / totalGoodVal : 0;
   const totalQty = sgOrders.reduce((s,o)=>s+o.qty,0);
 
   sgOrders.forEach(o => {
     const p = getProduct(o.pid);
-    const goodValPerUnit = o.rate * o.price;
+    const goodValPerUnit = o.rate * o.price * 1.0396;
     const logisticPerUnit = cbmRate * (p.cbm || 0);
     const vatPerUnit = vatRate * goodValPerUnit;
-    o.costPerUnit = Math.round(goodValPerUnit + logisticPerUnit + vatPerUnit + (extraCost / (totalQty||1)));
+    o.costPerUnit = Math.round(goodValPerUnit + logisticPerUnit + vatPerUnit);
     if (extraCosts.length > 0) o.extraCosts = [...(o.extraCosts||[]), ...extraCosts];
     if (o.arriveDate) o.status = o.extraCosts?.length > 0 ? 'delay' : 'done';
   });
