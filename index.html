@@ -795,17 +795,43 @@ let orders = [];
 let shipGroups = {};
 let currentUser = null;
 
+// ─── localStorage 캐시 ───────────────────────────────────────
+const CACHE_KEY = 'icd_cache_v1';
+function saveCache() {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({products, orders, shipGroups})); } catch(e) {}
+}
+function loadCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (!c) return false;
+    products = c.products || []; orders = c.orders || []; shipGroups = c.shipGroups || {};
+    return true;
+  } catch(e) { return false; }
+}
+function clearCache() { try { localStorage.removeItem(CACHE_KEY); } catch(e) {} }
+
+function setLoginLoading(on) {
+  const btn = document.getElementById('login-btn');
+  if (btn) { btn.disabled = on; btn.textContent = on ? '로그인 중...' : '로그인'; }
+}
+
 // ─── Auth & Data ─────────────────────────────────────────────
 async function initApp() {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     currentUser = session.user;
     document.getElementById('user-email').textContent = currentUser.email;
+    // 캐시 있으면 즉시 렌더링
+    if (loadCache()) {
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('app').style.display = 'grid';
+      updateFilterUI(); renderBoard();
+    }
+    // 백그라운드에서 최신 데이터 동기화
+    await loadData();
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('app').style.display = 'grid';
-    await loadData();
-    updateFilterUI();
-    renderBoard();
+    updateFilterUI(); renderBoard();
   } else {
     document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
@@ -814,13 +840,20 @@ async function initApp() {
     if (event === 'SIGNED_IN' && session) {
       currentUser = session.user;
       document.getElementById('user-email').textContent = currentUser.email;
+      if (loadCache()) {
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('app').style.display = 'grid';
+        updateFilterUI(); renderBoard();
+        setLoginLoading(false);
+      }
+      await loadData();
       document.getElementById('login-overlay').style.display = 'none';
       document.getElementById('app').style.display = 'grid';
-      await loadData();
-      updateFilterUI();
-      renderBoard();
+      updateFilterUI(); renderBoard();
+      setLoginLoading(false);
     } else if (event === 'SIGNED_OUT') {
       currentUser = null;
+      clearCache();
       document.getElementById('login-overlay').style.display = 'flex';
       document.getElementById('app').style.display = 'none';
       products = []; orders = []; shipGroups = {};
@@ -832,13 +865,12 @@ async function signIn() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
-  const btn = document.getElementById('login-btn');
   if (!email || !password) { errEl.textContent = '이메일과 비밀번호를 입력해주세요'; return; }
-  btn.disabled = true; btn.textContent = '로그인 중...';
+  setLoginLoading(true);
   const { error } = await sb.auth.signInWithPassword({ email, password });
-  btn.disabled = false; btn.textContent = '로그인';
-  if (error) { errEl.textContent = '이메일 또는 비밀번호가 올바르지 않습니다'; return; }
+  if (error) { setLoginLoading(false); errEl.textContent = '이메일 또는 비밀번호가 올바르지 않습니다'; return; }
   errEl.textContent = '';
+  // 로딩 상태는 onAuthStateChange → loadData 완료 후 해제
 }
 
 async function signOut() {
@@ -878,6 +910,7 @@ async function loadData() {
       otherLogistics: sg.other_logistics||0, extraCost: sg.extra_cost, saved: sg.saved,
     };
   });
+  saveCache();
 }
 
 async function syncOrder(o) {
