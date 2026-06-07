@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>친절한마이쮸 — 수출입 원가관리</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -646,6 +647,7 @@ th.col-filtered { color: var(--accent); }
           <span style="font-size:11px;color:var(--text3)">PDF, JPG, PNG 지원</span>
           <span id="c-invoice-uploading" style="display:none;font-size:11px;color:var(--info)">업로드 중...</span>
         </div>
+        <div id="c-invoice-analysis" style="display:none;margin-bottom:8px;font-size:11px;color:var(--text2);background:var(--info-bg);border:1px solid var(--info-border);border-radius:var(--radius);padding:7px 10px"></div>
         <div id="c-invoice-list"></div>
       </div>
       <!-- 계산 중간값 표시 -->
@@ -1006,6 +1008,10 @@ let currentOrderId = null;
 let currentShipGroup = null;
 let pendingConflict = null; // { onChoice: fn(tag) } — ship group conflict dialog callback
 let costEntryCount = 0;
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
 // ─── 유틸 ───────────────────────────────────────────────────
 const fmt = n => n ? '₩' + Math.round(n).toLocaleString() : '—';
@@ -2396,12 +2402,164 @@ function renderInvoiceList() {
   wrap.innerHTML = rows.join('');
 }
 
+function setInvoiceAnalysis(message, isWarn) {
+  const el = document.getElementById('c-invoice-analysis');
+  if (!el) return;
+  if (!message) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  el.style.display = 'block';
+  el.style.color = isWarn ? 'var(--warn)' : 'var(--text2)';
+  el.style.background = isWarn ? 'var(--warn-bg)' : 'var(--info-bg)';
+  el.style.borderColor = isWarn ? 'var(--warn-border)' : 'var(--info-border)';
+  el.textContent = message;
+}
+
+function getCostTypeValue(id) {
+  const rawType = document.getElementById('ce-type-' + id)?.value;
+  return rawType === '기타'
+    ? (document.getElementById('ce-type-text-' + id)?.value.trim() || '기타')
+    : rawType;
+}
+
+function setCostEntryAmount(type, amount, note) {
+  let targetId = null;
+  document.querySelectorAll('[id^="ce-amt-"]').forEach(el => {
+    const id = el.id.replace('ce-amt-', '');
+    if (!targetId && getCostTypeValue(id) === type) targetId = id;
+  });
+
+  if (!targetId) {
+    addCostEntry({ type, amount, date: today(), note });
+    return;
+  }
+
+  const amountEl = document.getElementById('ce-amt-' + targetId);
+  const dateEl = document.getElementById('ce-date-' + targetId);
+  const noteEl = document.getElementById('ce-note-' + targetId);
+  if (amountEl) amountEl.value = Math.round(amount);
+  if (dateEl) dateEl.value = today();
+  if (noteEl && !noteEl.value) noteEl.value = note;
+}
+
+async function readPdfInvoiceText(file) {
+  if (!window.pdfjsLib) throw new Error('PDF 분석 라이브러리를 불러오지 못했습니다');
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pages = [];
+  for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
+    const page = await pdf.getPage(pageNo);
+    const content = await page.getTextContent();
+    pages.push(content.items.map(item => item.str).filter(Boolean).join(' '));
+  }
+  return pages.join('\n');
+}
+
+function parseInvoiceAmount(raw) {
+  const cleaned = raw.replace(/[^\d.-]/g, '');
+  if (!cleaned || cleaned === '-' || cleaned === '.') return 0;
+  return Math.abs(Number(cleaned)) || 0;
+}
+
+function findAmountsNear(text) {
+  const matches = text.match(/(?:KRW|WON|₩)?\s*-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d{4,}(?:\.\d+)?/gi) || [];
+  return matches
+    .map(parseInvoiceAmount)
+    .filter(n => n >= 100)
+    .filter(n => n < 1000000000);
+}
+
+function extractInvoiceCosts(text) {
+  const normalized = text
+    .replace(/\u00a0/g, ' ')
+    .replace(/[，]/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const lines = text.split(/\r?\n/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const rules = [
+    { type: '관세', keywords: ['관세', 'customs duty', 'duty'], exclude: ['부가세', 'vat'] },
+    { type: '부가세', keywords: ['부가세', '부가 가치세', 'vat', 'value added tax'], exclude: [] },
+    { type: '통관수수료', keywords: ['통관수수료', '통관 수수료', '통관료', 'customs clearance', 'clearance fee'], exclude: [] },
+    { type: '내륙운송비', keywords: ['내륙운송', '내륙 운송', '국내운송', '운송료', 'trucking', 'transportation'], exclude: ['해상', 'ocean'] },
+    { type: '장치료', keywords: ['장치료', '창고료', '보관료', 'storage', 'warehouse'], exclude: [] },
+    { type: '검사비 추가', keywords: ['검사비', '검역', '검사 수수료', 'inspection', 'exam'], exclude: [] },
+  ];
+
+  const costs = {};
+  rules.forEach(rule => {
+    const keywordMatched = line => {
+      const lower = line.toLowerCase();
+      return rule.keywords.some(k => lower.includes(k.toLowerCase()))
+        && !rule.exclude.some(k => lower.includes(k.toLowerCase()));
+    };
+    let candidates = [];
+    lines.filter(keywordMatched).forEach(line => {
+      candidates.push(...findAmountsNear(line));
+    });
+    if (candidates.length === 0) {
+      rule.keywords.forEach(keyword => {
+        const idx = normalized.toLowerCase().indexOf(keyword.toLowerCase());
+        if (idx >= 0) candidates.push(...findAmountsNear(normalized.slice(idx, idx + 140)));
+      });
+    }
+    if (candidates.length > 0) costs[rule.type] = Math.max(...candidates);
+  });
+  return costs;
+}
+
+async function analyzeInvoiceFile(file) {
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+    return { file: file.name, skipped: true, reason: '이미지는 자동 분석 대상이 아닙니다' };
+  }
+  const text = await readPdfInvoiceText(file);
+  if (!text.trim()) {
+    return { file: file.name, costs: {}, reason: 'PDF 텍스트를 찾지 못했습니다' };
+  }
+  return { file: file.name, costs: extractInvoiceCosts(text) };
+}
+
+function applyInvoiceCostSuggestions(results) {
+  const applied = [];
+  results.forEach(result => {
+    if (!result.costs) return;
+    Object.entries(result.costs).forEach(([type, amount]) => {
+      if (!amount) return;
+      setCostEntryAmount(type, amount, 'PDF 자동분석: ' + result.file);
+      applied.push(type + ' ' + fmt(amount));
+    });
+  });
+  if (applied.length > 0) calcCostPreview();
+  return applied;
+}
+
 async function handleInvoiceUpload(e) {
   const files = Array.from(e.target.files);
   if (!files.length) return;
   const sg = shipGroups[currentShipGroup];
   if (!sg.invoiceFiles) sg.invoiceFiles = [];
   document.getElementById('c-invoice-uploading').style.display = 'inline';
+  setInvoiceAnalysis('청구서 PDF를 분석하는 중입니다...');
+  const analysisResults = [];
+  for (let i = 0; i < files.length; i++) {
+    try {
+      analysisResults.push(await analyzeInvoiceFile(files[i]));
+    } catch (err) {
+      analysisResults.push({ file: files[i].name, error: err.message || String(err) });
+    }
+  }
+  const applied = applyInvoiceCostSuggestions(analysisResults);
+  if (applied.length > 0) {
+    setInvoiceAnalysis('자동 입력됨: ' + applied.join(', '));
+  } else {
+    const pdfCount = files.filter(file => /\.pdf$/i.test(file.name) || file.type === 'application/pdf').length;
+    setInvoiceAnalysis(
+      pdfCount ? '자동 인식된 원가 항목이 없습니다. PDF가 이미지형이거나 양식명이 달라 수동 확인이 필요합니다.' : '',
+      true
+    );
+  }
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const safeName = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
