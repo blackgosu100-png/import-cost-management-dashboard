@@ -114,7 +114,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .board-table { table-layout: fixed; user-select: none; }
 
 /* Data rows */
-.board-table tbody tr.data-row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; height: 52px; background: #fff; }
+.board-table tbody tr.data-row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; height: 35px; background: #fff; }
 .board-table tbody tr.data-row:hover { background: var(--surface2); }
 .board-table tbody tr.data-row.row-done { background: #c4c4cc; }
 .board-table tbody tr.data-row.row-done:hover { background: #b4b4bd; }
@@ -134,7 +134,11 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .bulk-bar input[type=date]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: .6; }
 .bulk-bar-count { font-size: 12px; font-weight: 600; margin-right: 6px; white-space: nowrap; }
 .bulk-bar-sep { width: 1px; height: 20px; background: rgba(255,255,255,.2); margin: 0 4px; }
-.board-table td { padding: 0 10px; vertical-align: middle; height: 52px; overflow: hidden; }
+.board-table td { padding: 0 10px; vertical-align: middle; height: 35px; overflow: hidden; text-align: center; }
+.board-table td.cell-product, .board-table td[data-f="option"], .board-table td[data-f="pcode"], .board-table td[data-f="ocode"] { text-align: left; }
+.board-table thead th { text-align: center; }
+.board-table thead th:nth-child(2), .board-table thead th:nth-child(3),
+.board-table thead th:nth-child(4), .board-table thead th:nth-child(5) { text-align: left; }
 .cell-product { min-width: 200px; }
 .cell-product-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .cell-product-sub { font-size: 11px; color: var(--text3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -143,11 +147,11 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .cell-date.delayed { color: var(--danger); font-weight: 500; }
 .cell-date.empty { color: var(--text3); }
 .cell-date.memo { color: var(--warn); font-style: italic; font-size: 11px; }
-.cell-cost { font-family: var(--mono); font-size: 12px; font-weight: 500; text-align: left; white-space: nowrap; }
+.cell-cost { font-family: var(--mono); font-size: 12px; font-weight: 500; text-align: center; white-space: nowrap; }
 .cell-cost.done { color: var(--accent); }
 .cell-cost.partial { color: var(--warn); }
 .cell-cost.empty { color: var(--text3); font-size: 11px; }
-.cell-num { font-family: var(--mono); font-size: 12px; color: var(--text2); text-align: left; }
+.cell-num { font-family: var(--mono); font-size: 12px; color: var(--text2); text-align: center; }
 
 /* Status badges */
 .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 2px 8px; border-radius: 9999px; font-weight: 500; white-space: nowrap; }
@@ -1519,7 +1523,7 @@ function renderBoard() {
       <td class="row-no">${_fi + 1}</td>
       <td class="cell-product cell-edit" style="${stripe}" data-f="name" data-oid="${o.id}" data-oids="${o.id}">
         <div style="display:flex;align-items:center;gap:8px">
-          ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
+          ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:26px;height:26px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
           <div class="cell-product-name" style="min-width:0;flex:1">${p.name || '—'}</div>
         </div>
       </td>
@@ -1970,9 +1974,12 @@ function mergeRangeRows() {
   groupSelected(ids);
 }
 function unmergeRangeRows() {
-  const ids = _rangeRowIds();
+  const rowIds = _rangeRowIds();
   closeRowCtxMenu();
-  ungroupSelected(ids);
+  // 병합 셀 하나만 선택하고 풀어도 그 그룹 전체가 해체되도록 멤버 전원 포함
+  const gids = new Set(rowIds.map(id => getOrder(id)?.groupId).filter(Boolean));
+  const ids = orders.filter(o => gids.has(o.groupId)).map(o => o.id);
+  ungroupSelected(ids.length ? ids : rowIds);
 }
 
 // 행 추가: 기준 행의 상품·발주일·차수·단가를 물려받은 빈 발주 행 (정렬상 바로 옆에 표시됨)
