@@ -1760,15 +1760,14 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedOrders.add(oid);
         lastSelectedOrderId = oid;
       }
-      updateBulkBar();
-      renderBoard();
+      paintRowSelection();
       return;
     }
     const td = e.target.closest('td.cell-edit');
     if (!td || e.button !== 0) return;
     if (td.classList.contains('cell-editing')) return;
     e.preventDefault();
-    if (selectedOrders.size > 0) { selectedOrders.clear(); lastSelectedOrderId = null; updateBulkBar(); renderBoard(); } // 셀을 잡으면 행 선택 해제 (엑셀 동작)
+    if (selectedOrders.size > 0) { selectedOrders.clear(); lastSelectedOrderId = null; paintRowSelection(); } // 셀을 잡으면 행 선택 해제 (엑셀 동작)
     const key = { oid: td.dataset.oid, f: td.dataset.f };
     if (e.shiftKey && selRange) selRange.f = key;
     else { selRange = { a: key, f: key }; _dragSel = true; }
@@ -1789,8 +1788,7 @@ document.addEventListener('DOMContentLoaded', () => {
       selectedOrders.clear();
       next.forEach(id => selectedOrders.add(id));
       lastSelectedOrderId = oid;
-      updateBulkBar();
-      renderBoard();
+      paintRowSelection();
       return;
     }
     if (!_dragSel || !selRange) return;
@@ -1809,8 +1807,7 @@ document.addEventListener('DOMContentLoaded', () => {
       selectedOrders.clear();
       selectedOrders.add(oid);
       lastSelectedOrderId = oid;
-      updateBulkBar();
-      renderBoard();
+      paintRowSelection();
     }
     showRowCtxMenu(e.clientX, e.clientY, oid);
   });
@@ -3693,6 +3690,13 @@ function updateBulkBar() {
   // 상단 일괄 바 제거됨 — 행 기능은 No. 열 우클릭 메뉴로 통합
 }
 
+// 행 선택 표시만 갱신 — 전체 재렌더 없이 클래스 토글 (드래그 성능 핵심)
+function paintRowSelection() {
+  document.querySelectorAll('#board-body tr[data-oid]').forEach(tr => {
+    tr.classList.toggle('row-selected', selectedOrders.has(tr.dataset.oid));
+  });
+}
+
 function getVisibleOrderIds() {
   return [...document.querySelectorAll('#board-body tr.data-row')].map(tr => tr.dataset.oid).filter(Boolean);
 }
@@ -3714,8 +3718,7 @@ async function bulkDelete() {
 function clearSelection() {
   selectedOrders.clear();
   lastSelectedOrderId = null;
-  updateBulkBar();
-  renderBoard();
+  paintRowSelection();
 }
 
 // ─── 물류 그룹 (수동 묶기) ────────────────────────────────────
