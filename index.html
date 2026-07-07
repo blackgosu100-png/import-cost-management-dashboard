@@ -1521,16 +1521,16 @@ function renderBoard() {
       <td class="cell-date cell-edit ${o.arriveDate ? (hasExtra ? 'delayed' : 'done') : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('arriveDate')}>${fmtDate(o.arriveDate) || '—'}</td>
     ` : '';
     tr.innerHTML = `
-      <td class="cell-product" style="${stripe}">
+      <td class="cell-product cell-edit" style="${stripe}" data-f="name" data-oid="${o.id}" data-oids="${o.id}">
         <div style="display:flex;align-items:center;gap:8px">
           ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
           <div class="cell-product-name" style="min-width:0;flex:1">${p.name || '—'}</div>
         </div>
       </td>
-      <td><div class="cell-product-sub" style="color:var(--text2);font-size:12px;min-width:0">${p.option || '—'}</div></td>
-      <td style="font-family:var(--mono);font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.pcode || '—'}</td>
-      <td style="font-family:var(--mono);font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.ocode || '—'}</td>
-      <td class="cell-num">${o.orderSeq || '—'}</td>
+      <td class="cell-edit" data-f="option" data-oid="${o.id}" data-oids="${o.id}"><div class="cell-product-sub" style="color:var(--text2);font-size:12px;min-width:0">${p.option || '—'}</div></td>
+      <td class="cell-edit" data-f="pcode" data-oid="${o.id}" data-oids="${o.id}" style="font-family:var(--mono);font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.pcode || '—'}</td>
+      <td class="cell-edit" data-f="ocode" data-oid="${o.id}" data-oids="${o.id}" style="font-family:var(--mono);font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.ocode || '—'}</td>
+      <td class="cell-num cell-edit" data-f="orderSeq" data-oid="${o.id}" data-oids="${o.id}">${o.orderSeq || '—'}</td>
       <td class="cell-num cell-edit" data-f="qty" data-oid="${o.id}" data-oids="${o.id}">${fmtNum(o.qty)}</td>
       ${dateCells}
       <td>${statusBadge(o)}</td>
@@ -1619,8 +1619,10 @@ function guessYearDate(mo, d) {
 }
 
 // ─── 인라인 셀 편집 + 엑셀식 범위 선택 복사/붙여넣기 ─────────
-const EDIT_COLS = ['qty', 'orderDate', 'factoryDate', 'whDate', 'shipDate', 'arriveDate'];
-const FIELD_LABEL = { qty: '수량', orderDate: '발주일', factoryDate: '공장출고', whDate: '위해입고', shipDate: '선적일', arriveDate: '국내입고' };
+const EDIT_COLS = ['name', 'option', 'pcode', 'ocode', 'orderSeq', 'qty', 'orderDate', 'factoryDate', 'whDate', 'shipDate', 'arriveDate'];
+const FIELD_LABEL = { name: '상품명', option: '옵션명', pcode: '상품코드', ocode: '옵션코드', orderSeq: '차수', qty: '수량', orderDate: '발주일', factoryDate: '공장출고', whDate: '위해입고', shipDate: '선적일', arriveDate: '국내입고' };
+const PRODUCT_FIELDS = new Set(['name', 'option', 'pcode', 'ocode']); // 제품 DB 공통 값 — 수정 시 모든 발주 행 반영
+const DATE_FIELDS = new Set(['orderDate', 'factoryDate', 'whDate', 'shipDate', 'arriveDate']);
 let gridRows = [];   // renderBoard 후 재구축: [{oid, tds:{field: td|null}}]
 let gridIdx = {};    // oid → 행 인덱스
 let selRange = null; // { a:{oid,f}, f:{oid,f} } — 앵커/포커스 (엑셀의 선택 시작/끝)
@@ -1703,6 +1705,7 @@ function refreshCellGrid() {
 function cellRawValue(oid, f) {
   const o = getOrder(oid);
   if (!o) return '';
+  if (PRODUCT_FIELDS.has(f)) return getProduct(o.pid)[f] || '';
   return f === 'qty' ? (o.qty ?? '') : (o[f] || '');
 }
 
@@ -1761,7 +1764,7 @@ function openCellEditor(td, initial) {
   if (initial !== undefined) inp.setSelectionRange(inp.value.length, inp.value.length);
   else inp.select();
 
-  const isDate = f !== 'qty';
+  const isDate = DATE_FIELDS.has(f);
   let hint = null;
   const showHint = () => {
     if (!isDate) return;
@@ -1800,10 +1803,32 @@ function openCellEditor(td, initial) {
       await fillRange(raw);
       return;
     }
+    // 제품 정보(상품명·옵션명·코드): 제품 DB를 수정 → 모든 발주 행에 반영
+    if (PRODUCT_FIELDS.has(f)) {
+      if ((f === 'name' || f === 'option') && !raw) { inp.classList.add('parse-err'); return; }
+      closed = true;
+      removeHint(); editingCell = false;
+      const o = getOrder(oid);
+      const p = getProduct(o.pid);
+      if (p && p[f] !== raw) {
+        p[f] = raw;
+        const affected = orders.filter(x => x.pid === p.id).length;
+        renderBoard();
+        showToast(`제품 정보 수정됨 — 발주 ${affected}건에 반영`);
+        await syncProduct(p);
+        saveCache();
+      } else {
+        renderBoard();
+      }
+      if (moveDir) moveSelection(moveDir.dr, moveDir.dc, false);
+      return;
+    }
     let val;
     if (f === 'qty') {
       val = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
       if (raw !== '' && isNaN(val)) { inp.classList.add('parse-err'); return; }
+    } else if (f === 'orderSeq') {
+      val = raw;
     } else {
       val = parseFlexDate(raw);
       if (val === null) { inp.classList.add('parse-err'); showHint(); return; }
@@ -1827,18 +1852,13 @@ function openCellEditor(td, initial) {
 // 파싱된 값을 범위 전체에 적용 (Ctrl+Enter)
 async function fillRange(raw) {
   const changes = [];
+  let productSkipped = 0;
   forEachRangeCell((td, oid, f) => {
-    let val, ok = true;
-    if (f === 'qty') {
-      val = raw === '' ? null : parseFloat(String(raw).replace(/,/g, ''));
-      if (raw !== '' && isNaN(val)) ok = false;
-    } else {
-      val = parseFlexDate(raw);
-      if (val === null) ok = false;
-    }
+    if (PRODUCT_FIELDS.has(f)) { productSkipped++; return; } // 제품 정보는 개별 편집만
+    const { val, ok } = parseForField(f, String(raw).trim());
     if (ok) changes.push({ oids: (td.dataset.oids || oid).split(','), f, val });
   });
-  await applyChanges(changes, `${changes.length}개 셀 채움`);
+  await applyChanges(changes, `${changes.length}개 셀 채움${productSkipped ? ` (제품 정보 ${productSkipped}개 제외)` : ''}`);
 }
 
 // 변경 목록 적용 + 배치 저장 (모든 셀 수정의 공통 경로)
@@ -1880,8 +1900,10 @@ async function bulkSyncOrders(list) {
 // 선택 범위 비우기 (Delete)
 function clearRange() {
   const changes = [];
-  forEachRangeCell((td, oid, f) =>
-    changes.push({ oids: (td.dataset.oids || oid).split(','), f, val: f === 'qty' ? null : '' }));
+  forEachRangeCell((td, oid, f) => {
+    if (PRODUCT_FIELDS.has(f)) return; // 제품 정보는 비우기 제외
+    changes.push({ oids: (td.dataset.oids || oid).split(','), f, val: f === 'qty' ? null : '' });
+  });
   if (!changes.length) return;
   applyChanges(changes, `${changes.length}개 셀 비움`);
 }
@@ -1975,10 +1997,12 @@ document.addEventListener('paste', e => {
 });
 
 function parseForField(f, raw) {
+  if (PRODUCT_FIELDS.has(f)) return { val: null, ok: false }; // 제품 정보는 범위 작업 제외
   if (f === 'qty') {
     const v = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
     return { val: v, ok: !(raw !== '' && isNaN(v)) };
   }
+  if (f === 'orderSeq') return { val: raw, ok: true };
   const v = parseFlexDate(raw);
   return { val: v, ok: v !== null };
 }
@@ -2042,7 +2066,7 @@ function renderPastePreview(skipped) {
           <td style="padding:5px 12px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">${c.label}${c.oids.length > 1 ? ` <span style="color:var(--text3)">(그룹 ${c.oids.length}건)</span>` : ''}</td>
           <td style="padding:5px 12px;font-size:11px">${FIELD_LABEL[c.f]}</td>
           <td style="padding:5px 12px;font-size:11px;font-family:var(--mono)">${c.raw || '(비움)'}</td>
-          <td style="padding:5px 12px;font-size:11px;font-family:var(--mono);${c.ok ? 'color:var(--accent);font-weight:600' : 'color:var(--danger)'}">${c.ok ? (c.val === '' || c.val == null ? '(비우기)' : c.val) : '인식 실패'}</td>
+          <td style="padding:5px 12px;font-size:11px;font-family:var(--mono);${c.ok ? 'color:var(--accent);font-weight:600' : 'color:var(--danger)'}">${c.ok ? (c.val === '' || c.val == null ? '(비우기)' : c.val) : (PRODUCT_FIELDS.has(c.f) ? '제품 정보 — 개별 편집만 가능' : '인식 실패')}</td>
         </tr>`).join('')}
       ${_pasteChanges.length > 60 ? `<tr><td colspan="4" style="padding:8px 12px;font-size:11px;color:var(--text3)">… 외 ${_pasteChanges.length - 60}개</td></tr>` : ''}
       </tbody>
