@@ -288,6 +288,18 @@ td.cell-edit.cell-sel { box-shadow:inset 0 0 0 2px #2563eb; border-radius:2px; }
 td.cell-edit.cell-sel-range { background:rgba(37,99,235,.12) !important; box-shadow:inset 0 0 0 1px rgba(37,99,235,.35); }
 td.cell-edit.cell-sel.cell-sel-range { box-shadow:inset 0 0 0 2px #2563eb; }
 .range-hint { position:fixed; z-index:290; background:#1a1a18; color:#fff; font-size:11px; padding:5px 12px; border-radius:6px; pointer-events:none; opacity:.92; }
+/* ─── 행 번호 열 (엑셀 행 머리글) ─────────────────── */
+td.row-no { background:var(--surface2); color:var(--text3); font-family:var(--mono); font-size:10.5px; text-align:center; cursor:pointer; user-select:none; border-right:1px solid var(--border); padding:0 4px !important; }
+td.row-no:hover { background:#e2e8f0; color:var(--text2); }
+tr.row-selected td.row-no { background:#2563eb; color:#fff; }
+body.row-dragging { cursor:default; }
+body.row-dragging .board-table tbody td:not(.row-no) { pointer-events:none; }
+.row-ctx-menu { position:fixed; z-index:320; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.16); min-width:170px; overflow:hidden; padding:4px 0; }
+.row-ctx-menu .ctx-item { padding:7px 14px; font-size:12px; cursor:pointer; display:flex; gap:8px; align-items:center; }
+.row-ctx-menu .ctx-item:hover { background:var(--surface2); }
+.row-ctx-menu .ctx-item.danger { color:var(--danger); }
+.row-ctx-menu .ctx-sep { height:1px; background:var(--border); margin:4px 0; }
+
 /* 복사 후 엑셀식 점선 테두리 (시계방향 회전) — 오버레이 한 장이라 표 성능 영향 없음 */
 .copy-ants { position:fixed; z-index:240; pointer-events:none;
   background-image:
@@ -428,6 +440,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       <table class="board-table" id="board-table">
         <thead>
           <tr>
+            <th style="width:40px;text-align:center;cursor:default">No.</th>
             <th style="width:180px;user-select:none;position:relative" onclick="openColFilter(event,'name')">상품명 <span class="col-filter-icon" id="fi-name">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
             <th style="width:140px;user-select:none;position:relative" onclick="openColFilter(event,'option')">옵션명 <span class="col-filter-icon" id="fi-option">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
             <th style="width:80px;user-select:none;position:relative" onclick="openColFilter(event,'pcode')">상품코드 <span class="col-filter-icon" id="fi-pcode">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
@@ -1461,7 +1474,7 @@ function renderBoard() {
   body.innerHTML = '';
 
   if (filtered.length === 0) {
-    body.innerHTML = `<tr><td colspan="14"><div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">조건에 맞는 발주 건이 없습니다</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="15"><div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">조건에 맞는 발주 건이 없습니다</div></div></td></tr>`;
     refreshCellGrid();
     return;
   }
@@ -1481,41 +1494,8 @@ function renderBoard() {
     else if (status === 'done' || status === 'delay') rowClass += ' row-done';
     tr.className = rowClass;
     tr.dataset.oid = o.id;
-    tr.addEventListener('mousedown', e => { if (e.shiftKey) e.preventDefault(); });
+    // 행 선택은 No. 열 전담 — 그 외 영역 클릭은 상세 모달
     tr.onclick = e => {
-      if (e.shiftKey) {
-        e.preventDefault();
-        if (lastSelectedOrderId) {
-          const visibleIds = getVisibleOrderIds();
-          const a = visibleIds.indexOf(lastSelectedOrderId);
-          const b = visibleIds.indexOf(o.id);
-          if (a !== -1 && b !== -1) {
-            const [from, to] = a < b ? [a, b] : [b, a];
-            visibleIds.slice(from, to + 1).forEach(id => selectedOrders.add(id));
-          }
-        } else {
-          selectedOrders.add(o.id);
-          lastSelectedOrderId = o.id;
-        }
-        updateBulkBar();
-        renderBoard();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
-        lastSelectedOrderId = o.id;
-        updateBulkBar();
-        renderBoard();
-        return;
-      }
-      if (selectedOrders.size > 0) {
-        selectedOrders.has(o.id) ? selectedOrders.delete(o.id) : selectedOrders.add(o.id);
-        lastSelectedOrderId = o.id;
-        updateBulkBar();
-        renderBoard();
-        return;
-      }
       lastSelectedOrderId = o.id;
       openDetailModal(o.id);
     };
@@ -1541,6 +1521,7 @@ function renderBoard() {
       <td class="cell-date cell-edit ${o.arriveDate ? (hasExtra ? 'delayed' : 'done') : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('arriveDate')}>${fmtDate(o.arriveDate) || '—'}</td>
     ` : '';
     tr.innerHTML = `
+      <td class="row-no">${_fi + 1}</td>
       <td class="cell-product cell-edit" style="${stripe}" data-f="name" data-oid="${o.id}" data-oids="${o.id}">
         <div style="display:flex;align-items:center;gap:8px">
           ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
@@ -1761,33 +1742,94 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('scroll', removeCopyAnts, { passive: true });
   // 셀 클릭이 행 클릭(상세 모달)으로 번지지 않게 캡처 단계에서 차단
   body.addEventListener('click', e => {
+    if (e.target.closest('td.row-no')) { e.stopPropagation(); return; }
     const td = e.target.closest('td.cell-edit');
     if (!td) return;
-    if (e.shiftKey || e.ctrlKey || e.metaKey || selectedOrders.size > 0) return;
     e.stopPropagation();
   }, true);
   body.addEventListener('mousedown', e => {
+    // 행 번호 열: 엑셀처럼 행 선택 (클릭·드래그·Ctrl·Shift)
+    const rn = e.target.closest('td.row-no');
+    if (rn && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      selRange = null; paintSel(); removeCopyAnts(); // 셀 선택 해제
+      const oid = rn.closest('tr').dataset.oid;
+      const visibleIds = getVisibleOrderIds();
+      if (e.shiftKey && lastSelectedOrderId) {
+        const a = visibleIds.indexOf(lastSelectedOrderId), b = visibleIds.indexOf(oid);
+        if (a !== -1 && b !== -1) {
+          const [from, to] = a < b ? [a, b] : [b, a];
+          visibleIds.slice(from, to + 1).forEach(id => selectedOrders.add(id));
+        }
+      } else if (e.ctrlKey || e.metaKey) {
+        selectedOrders.has(oid) ? selectedOrders.delete(oid) : selectedOrders.add(oid);
+        lastSelectedOrderId = oid;
+      } else {
+        _rowDragAnchor = oid;
+        _rowDragging = true;
+        document.body.classList.add('row-dragging');
+        selectedOrders.clear();
+        selectedOrders.add(oid);
+        lastSelectedOrderId = oid;
+      }
+      updateBulkBar();
+      renderBoard();
+      return;
+    }
     const td = e.target.closest('td.cell-edit');
     if (!td || e.button !== 0) return;
-    if (e.ctrlKey || e.metaKey || selectedOrders.size > 0) return; // 행 선택 모드 유지
     if (td.classList.contains('cell-editing')) return;
     e.preventDefault();
+    if (selectedOrders.size > 0) { selectedOrders.clear(); lastSelectedOrderId = null; updateBulkBar(); renderBoard(); } // 셀을 잡으면 행 선택 해제 (엑셀 동작)
     const key = { oid: td.dataset.oid, f: td.dataset.f };
     if (e.shiftKey && selRange) selRange.f = key;
     else { selRange = { a: key, f: key }; _dragSel = true; }
     paintSel();
   }, true);
   body.addEventListener('mouseover', e => {
+    // 행 번호 위로 드래그 → 연속 행 선택
+    if (_rowDragging) {
+      const rn = e.target.closest('td.row-no');
+      if (!rn) return;
+      const oid = rn.closest('tr').dataset.oid;
+      const visibleIds = getVisibleOrderIds();
+      const a = visibleIds.indexOf(_rowDragAnchor), b = visibleIds.indexOf(oid);
+      if (a === -1 || b === -1) return;
+      const [from, to] = a < b ? [a, b] : [b, a];
+      const next = new Set(visibleIds.slice(from, to + 1));
+      if (next.size === selectedOrders.size && [...next].every(id => selectedOrders.has(id))) return;
+      selectedOrders.clear();
+      next.forEach(id => selectedOrders.add(id));
+      lastSelectedOrderId = oid;
+      updateBulkBar();
+      renderBoard();
+      return;
+    }
     if (!_dragSel || !selRange) return;
     const td = e.target.closest('td.cell-edit');
     if (!td) return;
     selRange.f = { oid: td.dataset.oid, f: td.dataset.f };
     paintSel();
   });
+  body.addEventListener('contextmenu', e => {
+    const rn = e.target.closest('td.row-no');
+    if (!rn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const oid = rn.closest('tr').dataset.oid;
+    if (!selectedOrders.has(oid)) {
+      selectedOrders.clear();
+      selectedOrders.add(oid);
+      lastSelectedOrderId = oid;
+      updateBulkBar();
+      renderBoard();
+    }
+    showRowCtxMenu(e.clientX, e.clientY, oid);
+  });
   body.addEventListener('dblclick', e => {
     const td = e.target.closest('td.cell-edit');
     if (!td || td.classList.contains('cell-editing')) return;
-    if (selectedOrders.size > 0) return;
     e.stopPropagation();
     const key = { oid: td.dataset.oid, f: td.dataset.f };
     selRange = { a: key, f: key };
@@ -1795,7 +1837,56 @@ document.addEventListener('DOMContentLoaded', () => {
     openCellEditor(td);
   }, true);
 });
-document.addEventListener('mouseup', () => { _dragSel = false; });
+document.addEventListener('mouseup', () => {
+  _dragSel = false;
+  if (_rowDragging) { _rowDragging = false; document.body.classList.remove('row-dragging'); }
+});
+
+// ─── 행 우클릭 메뉴: 행 추가/삭제 (엑셀 방식) ────────────────
+let _rowDragAnchor = null, _rowDragging = false, _rowCtxEl = null;
+
+function closeRowCtxMenu() { if (_rowCtxEl) { _rowCtxEl.remove(); _rowCtxEl = null; } }
+
+function showRowCtxMenu(x, y, oid) {
+  closeRowCtxMenu();
+  const n = selectedOrders.size;
+  _rowCtxEl = document.createElement('div');
+  _rowCtxEl.className = 'row-ctx-menu';
+  _rowCtxEl.innerHTML = `
+    <div class="ctx-item" onclick="addRowRelative('${oid}', 'above')">⬆ 위에 행 추가</div>
+    <div class="ctx-item" onclick="addRowRelative('${oid}', 'below')">⬇ 아래에 행 추가</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item danger" onclick="closeRowCtxMenu();bulkDelete()">🗑 행 삭제 (${n}건)</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="closeRowCtxMenu();clearSelection()">선택 해제</div>`;
+  document.body.appendChild(_rowCtxEl);
+  const r = _rowCtxEl.getBoundingClientRect();
+  _rowCtxEl.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+  _rowCtxEl.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+}
+document.addEventListener('mousedown', e => { if (_rowCtxEl && !e.target.closest('.row-ctx-menu')) closeRowCtxMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRowCtxMenu(); });
+
+// 행 추가: 기준 행의 상품·발주일·차수·단가를 물려받은 빈 발주 행 (정렬상 바로 옆에 표시됨)
+async function addRowRelative(oid, where) {
+  closeRowCtxMenu();
+  const ref = getOrder(oid);
+  if (!ref) return;
+  const o = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+    pid: ref.pid, qty: null, rate: ref.rate, price: ref.price, orderSeq: ref.orderSeq,
+    orderDate: ref.orderDate, factoryDate: '', factoryMemo: '', whDate: '', shipDate: '', arriveDate: '',
+    shipTag: '', costPerUnit: null, extraCosts: [], status: 'active',
+  };
+  const idx = orders.indexOf(ref);
+  orders.splice(where === 'above' ? idx : idx + 1, 0, o);
+  clearSelection();
+  renderBoard();
+  showToast('행 추가됨 — 상품·발주일·차수를 물려받았어요. 수량부터 입력하세요');
+  await bulkSyncOrders([o]);
+  saveCache();
+  await logActivity('create', 'order', o.id, `행 추가 (${where === 'above' ? '위' : '아래'})`);
+}
 
 // ─── 셀 편집기 ───────────────────────────────────────────────
 function openCellEditor(td, initial) {
