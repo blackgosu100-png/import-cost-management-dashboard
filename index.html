@@ -292,7 +292,7 @@ td.cell-edit.cell-sel.cell-sel-range { box-shadow:inset 0 0 0 2px #2563eb; }
 td.row-no { background:var(--surface2); color:var(--text3); font-family:var(--mono); font-size:10.5px; text-align:center; cursor:pointer; user-select:none; border-right:1px solid var(--border); padding:0 4px !important; }
 td.row-no:hover { background:#e2e8f0; color:var(--text2); }
 tr.row-selected td.row-no { background:#2563eb; color:#fff; }
-body.row-dragging { cursor:default; }
+body.row-dragging { cursor:pointer; }
 body.row-dragging .board-table tbody td:not(.row-no) { pointer-events:none; }
 .row-ctx-menu { position:fixed; z-index:320; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.16); min-width:170px; overflow:hidden; padding:4px 0; }
 .row-ctx-menu .ctx-item { padding:7px 14px; font-size:12px; cursor:pointer; display:flex; gap:8px; align-items:center; }
@@ -421,19 +421,6 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
 
     <!-- 오늘 할 일 바 -->
     <div class="todo-bar" id="todo-bar"></div>
-
-    <!-- Bulk edit bar -->
-    <div class="bulk-bar" id="bulk-bar">
-      <span class="bulk-bar-count" id="bulk-count"></span>
-      <span style="font-size:11px;opacity:.55">날짜 수정은 셀을 드래그로 선택해서 바로 입력하세요</span>
-      <div class="bulk-bar-sep"></div>
-      <button class="btn btn-sm" onclick="clearSelection()" style="background:transparent;border-color:rgba(255,255,255,.3);color:rgba(255,255,255,.8)">선택 해제</button>
-      <div class="bulk-bar-sep"></div>
-      <button class="btn btn-sm" onclick="groupSelected()" style="background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4);color:#fff" title="선택한 발주를 같은 물류 그룹으로 묶기">🔗 그룹 묶기</button>
-      <button class="btn btn-sm" onclick="ungroupSelected()" style="background:transparent;border-color:rgba(255,255,255,.3);color:rgba(255,255,255,.8)" title="선택한 발주를 그룹에서 제외">⛓ 그룹 풀기</button>
-      <div class="bulk-bar-sep"></div>
-      <button class="btn btn-sm" onclick="bulkDelete()" style="background:rgba(185,28,28,.5);border-color:rgba(252,165,165,.4);color:#fff">선택 삭제</button>
-    </div>
 
     <!-- Board table -->
     <div class="board-content">
@@ -1853,8 +1840,13 @@ function showRowCtxMenu(x, y, oid) {
   _rowCtxEl = document.createElement('div');
   _rowCtxEl.className = 'row-ctx-menu';
   _rowCtxEl.innerHTML = `
+    <div style="padding:5px 14px 3px;font-size:10.5px;color:var(--text3)">${n}개 행 선택됨</div>
+    <div class="ctx-sep"></div>
     <div class="ctx-item" onclick="addRowRelative('${oid}', 'above')">⬆ 위에 행 추가</div>
     <div class="ctx-item" onclick="addRowRelative('${oid}', 'below')">⬇ 아래에 행 추가</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="closeRowCtxMenu();groupSelected()">🔗 그룹 묶기 (${n}건)</div>
+    <div class="ctx-item" onclick="closeRowCtxMenu();ungroupSelected()">⛓ 그룹 풀기</div>
     <div class="ctx-sep"></div>
     <div class="ctx-item danger" onclick="closeRowCtxMenu();bulkDelete()">🗑 행 삭제 (${n}건)</div>
     <div class="ctx-sep"></div>
@@ -3698,14 +3690,7 @@ initApp();
 
 // ─── 다중선택 / 일괄편집 ─────────────────────────────────────
 function updateBulkBar() {
-  const bar = document.getElementById('bulk-bar');
-  const cnt = document.getElementById('bulk-count');
-  if (selectedOrders.size > 0) {
-    bar.classList.add('active');
-    cnt.textContent = `${selectedOrders.size}개 선택됨`;
-  } else {
-    bar.classList.remove('active');
-  }
+  // 상단 일괄 바 제거됨 — 행 기능은 No. 열 우클릭 메뉴로 통합
 }
 
 function getVisibleOrderIds() {
