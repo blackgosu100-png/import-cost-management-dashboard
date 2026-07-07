@@ -2045,14 +2045,9 @@ async function addRowRelative(oid, where) {
 // ─── 셀 편집기 ───────────────────────────────────────────────
 function openCellEditor(td, initial) {
   const oid = td.dataset.oid, f = td.dataset.f;
-  // 제품 정보는 자유 입력 금지 — DB 안에서만:
-  // 상품명·옵션명 = 제품 DB에서 골라 연결(픽커), 코드 = 제품 수정 창에서만
-  if (f === 'name' || f === 'option') { openProductPicker(td, initial); return; }
-  if (f === 'pcode' || f === 'ocode') {
-    const o = getOrder(oid);
-    if (o) openEditProductModal(o.pid);
-    return;
-  }
+  // 제품 정보(상품명·옵션명·상품코드·옵션코드)는 자유 입력 금지 —
+  // 제품 DB 검색 픽커에서 골라 연결만 가능 (코드로도 검색됨)
+  if (PRODUCT_FIELDS.has(f)) { openProductPicker(td, initial); return; }
   editingCell = true;
   td.classList.add('cell-editing');
   const cur = initial !== undefined ? initial : cellRawValue(oid, f);
@@ -2230,7 +2225,7 @@ function openProductPicker(td, initial) {
     list = products.filter(p => !q || norm(p.name + p.option + (p.pcode || '') + (p.ocode || '')).includes(q)).slice(0, 8);
     if (hi >= list.length) hi = Math.max(0, list.length - 1);
     dd.innerHTML = list.length
-      ? list.map((p, i) => `<div class="cell-picker-item ${i === hi ? 'hi' : ''}" data-i="${i}">${p.name}<span> — ${p.option}${p.pcode ? ' · ' + p.pcode : ''}</span></div>`).join('')
+      ? list.map((p, i) => `<div class="cell-picker-item ${i === hi ? 'hi' : ''}" data-i="${i}">${p.name}<span> — ${p.option}${p.pcode ? ' · ' + p.pcode : ''}${p.ocode ? ' · ' + p.ocode : ''}</span></div>`).join('')
       : `<div class="cell-picker-empty">일치하는 제품 없음 — 새 제품은 제품 DB 탭에서 등록하세요</div>`;
   };
   renderDd();
