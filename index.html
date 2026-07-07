@@ -263,6 +263,10 @@ th.col-filtered { color: var(--accent); }
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
 }
+/* ─── 열 리사이즈 중 성능 최적화 ─────────────────── */
+body.col-resizing .board-table tbody { pointer-events: none; }
+body.col-resizing .board-table tbody tr.data-row { transition: none; }
+
 /* ─── 오늘 할 일 바 ──────────────────────────────── */
 .todo-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 20px 2px; }
 .todo-bar:empty { display:none; }
@@ -3535,29 +3539,48 @@ function computeGroupRuns(list) {
 // ─── 컬럼 리사이즈 ───────────────────────────────────────────
 let _rsCol = null, _rsStartX = 0, _rsStartW = 0;
 
+let _rsTable = null, _rsTableW = 0, _rsLastX = 0, _rsRaf = null;
+
 function startResize(e, handle) {
   e.stopPropagation();
   e.preventDefault();
   _rsCol = handle.parentElement;
-  _rsStartX = e.clientX;
+  _rsStartX = _rsLastX = e.clientX;
   _rsStartW = _rsCol.offsetWidth;
+  // 테이블을 현재 픽셀 폭으로 고정 — 한 열만 바꿔도 전체 열이 재분배되는 것 방지
+  _rsTable = document.getElementById('board-table');
+  _rsTableW = _rsTable.offsetWidth;
+  _rsTable.style.width = _rsTableW + 'px';
+  _rsTable.style.minWidth = '0';
   handle.classList.add('resizing');
   document.body.style.cursor = 'col-resize';
   document.body.style.userSelect = 'none';
+  document.body.classList.add('col-resizing'); // 드래그 중 행 hover/이벤트 계산 차단
+}
+
+function _applyResize() {
+  _rsRaf = null;
+  if (!_rsCol) return;
+  const w = Math.max(40, _rsStartW + (_rsLastX - _rsStartX));
+  _rsCol.style.width = w + 'px';
+  _rsTable.style.width = (_rsTableW + (w - _rsStartW)) + 'px';
 }
 
 document.addEventListener('mousemove', e => {
   if (!_rsCol) return;
-  const w = Math.max(40, _rsStartW + (e.clientX - _rsStartX));
-  _rsCol.style.width = w + 'px';
+  _rsLastX = e.clientX;
+  // 프레임당 1회만 레이아웃 반영 (rAF 스로틀)
+  if (!_rsRaf) _rsRaf = requestAnimationFrame(_applyResize);
 });
 
 document.addEventListener('mouseup', () => {
   if (!_rsCol) return;
+  if (_rsRaf) { cancelAnimationFrame(_rsRaf); _applyResize(); }
   document.querySelectorAll('.col-resizer').forEach(r => r.classList.remove('resizing'));
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
-  _rsCol = null;
+  document.body.classList.remove('col-resizing');
+  _rsCol = null; _rsTable = null;
 });
 // ─── 발주 엑셀 가져오기 ──────────────────────────────────────
 let _importRows = [];
