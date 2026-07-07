@@ -299,6 +299,10 @@ body.row-dragging .board-table tbody td:not(.row-no) { pointer-events:none; }
 .row-ctx-menu .ctx-item:hover { background:var(--surface2); }
 .row-ctx-menu .ctx-item.danger { color:var(--danger); }
 .row-ctx-menu .ctx-sep { height:1px; background:var(--border); margin:4px 0; }
+.ctx-swatches { display:flex; gap:5px; padding:5px 14px; align-items:center; }
+.ctx-swatches .sw-label { font-size:10.5px; color:var(--text3); width:28px; flex-shrink:0; }
+.ctx-swatches .sw { width:18px; height:18px; border-radius:4px; border:1px solid var(--border); cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--text3); }
+.ctx-swatches .sw:hover { transform:scale(1.18); border-color:var(--text3); }
 
 /* 복사 후 엑셀식 점선 테두리 (시계방향 회전) — 오버레이 한 장이라 표 성능 영향 없음 */
 .copy-ants { position:fixed; z-index:240; pointer-events:none;
@@ -1706,10 +1710,53 @@ function showCopyAnts() {
 }
 function removeCopyAnts() { if (_antsEl) { _antsEl.remove(); _antsEl = null; } }
 
+// ─── 셀 서식 (배경색·글자색·굵게) — 이 브라우저에 저장 ───────
+const CELL_STYLE_KEY = 'icd_cell_styles_v1';
+let _cellStyles = {};
+try { _cellStyles = JSON.parse(localStorage.getItem(CELL_STYLE_KEY) || '{}'); } catch (e) {}
+function saveCellStyles() {
+  try { localStorage.setItem(CELL_STYLE_KEY, JSON.stringify(_cellStyles)); } catch (e) {}
+}
+
+// 서식이 지정된 셀만 순회 — 표 크기와 무관하게 빠름
+function applyCellStyles() {
+  for (const key in _cellStyles) {
+    const i = key.indexOf(':');
+    const r = gridIdx[key.slice(0, i)];
+    if (r == null) continue;
+    const td = gridRows[r].tds[key.slice(i + 1)];
+    if (!td) continue;
+    const s = _cellStyles[key];
+    if (s.bg) td.style.backgroundColor = s.bg;
+    if (s.color) {
+      td.style.color = s.color;
+      td.querySelectorAll('div').forEach(d => d.style.color = s.color);
+    }
+    if (s.bold) td.style.fontWeight = '700';
+  }
+}
+
+// 선택 범위에 서식 패치 적용 (값이 null이면 해당 속성 제거)
+function applyStyleToRange(patch) {
+  closeRowCtxMenu();
+  let n = 0;
+  forEachRangeCell((td, oid, f) => {
+    const key = oid + ':' + f;
+    const s = { ...(_cellStyles[key] || {}) };
+    Object.entries(patch).forEach(([k, v]) => { if (v == null) delete s[k]; else s[k] = v; });
+    if (Object.keys(s).length) _cellStyles[key] = s; else delete _cellStyles[key];
+    n++;
+  });
+  saveCellStyles();
+  renderBoard();
+  showToast(`${n}개 셀 서식 적용됨`);
+}
+
 // renderBoard 직후 호출 — 그리드 좌표 재구축 + 선택 복원
 function refreshCellGrid() {
   rebuildGrid();
   paintSel();
+  applyCellStyles();
   removeCopyAnts(); // 표가 다시 그려지면 위치가 낡으므로 제거
 }
 
@@ -1799,17 +1846,31 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   body.addEventListener('contextmenu', e => {
     const rn = e.target.closest('td.row-no');
-    if (!rn) return;
+    if (rn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const oid = rn.closest('tr').dataset.oid;
+      if (!selectedOrders.has(oid)) {
+        selectedOrders.clear();
+        selectedOrders.add(oid);
+        lastSelectedOrderId = oid;
+        paintRowSelection();
+      }
+      showRowCtxMenu(e.clientX, e.clientY, oid);
+      return;
+    }
+    // 셀 우클릭: 서식·병합 메뉴 (범위 밖 셀이면 그 셀만 선택)
+    const td = e.target.closest('td.cell-edit');
+    if (!td || td.classList.contains('cell-editing')) return;
     e.preventDefault();
     e.stopPropagation();
-    const oid = rn.closest('tr').dataset.oid;
-    if (!selectedOrders.has(oid)) {
-      selectedOrders.clear();
-      selectedOrders.add(oid);
-      lastSelectedOrderId = oid;
-      paintRowSelection();
+    let inRange = false;
+    forEachRangeCell(t => { if (t === td) inRange = true; });
+    if (!inRange) {
+      selRange = { a: { oid: td.dataset.oid, f: td.dataset.f }, f: { oid: td.dataset.oid, f: td.dataset.f } };
+      paintSel();
     }
-    showRowCtxMenu(e.clientX, e.clientY, oid);
+    showCellCtxMenu(e.clientX, e.clientY);
   });
   body.addEventListener('dblclick', e => {
     const td = e.target.closest('td.cell-edit');
@@ -1855,6 +1916,60 @@ function showRowCtxMenu(x, y, oid) {
 }
 document.addEventListener('mousedown', e => { if (_rowCtxEl && !e.target.closest('.row-ctx-menu')) closeRowCtxMenu(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRowCtxMenu(); });
+
+// ─── 셀 우클릭 메뉴: 서식 + 병합 ─────────────────────────────
+const CELL_BG_COLORS = ['#fff3b0', '#fce5cd', '#d9ead3', '#d0e2f3', '#f4cccc', '#e9d8fd', '#e8eaed'];
+const CELL_TXT_COLORS = ['#d43c3c', '#b45309', '#16803c', '#2563eb', '#7c3aed', '#9c9c96'];
+
+function _rangeRowIds() {
+  const rc = rangeRect();
+  if (!rc) return [];
+  const ids = [];
+  for (let r = rc.rMin; r <= rc.rMax; r++) ids.push(gridRows[r].oid);
+  return ids;
+}
+
+function showCellCtxMenu(x, y) {
+  closeRowCtxMenu();
+  const n = rangeCellCount();
+  const rowIds = _rangeRowIds();
+  const anyGrouped = rowIds.some(id => getOrder(id)?.groupId);
+  let allBold = n > 0;
+  forEachRangeCell((td, oid, f) => { if (!_cellStyles[oid + ':' + f]?.bold) allBold = false; });
+  const bgSw = CELL_BG_COLORS.map(c => `<div class="sw" style="background:${c}" onclick="applyStyleToRange({bg:'${c}'})"></div>`).join('')
+    + `<div class="sw" title="배경 없음" onclick="applyStyleToRange({bg:null})">⌀</div>`;
+  const txSw = CELL_TXT_COLORS.map(c => `<div class="sw" style="color:${c};font-weight:700" onclick="applyStyleToRange({color:'${c}'})">가</div>`).join('')
+    + `<div class="sw" title="기본색" onclick="applyStyleToRange({color:null})">⌀</div>`;
+  _rowCtxEl = document.createElement('div');
+  _rowCtxEl.className = 'row-ctx-menu';
+  _rowCtxEl.innerHTML = `
+    <div style="padding:5px 14px 3px;font-size:10.5px;color:var(--text3)">${n}개 셀 선택됨</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-swatches"><span class="sw-label">배경</span>${bgSw}</div>
+    <div class="ctx-swatches"><span class="sw-label">글자</span>${txSw}</div>
+    <div class="ctx-item" onclick="applyStyleToRange({bold:${allBold ? 'null' : 'true'}})"><b>가</b> 굵게 ${allBold ? '해제' : ''}</div>
+    <div class="ctx-item" onclick="applyStyleToRange({bg:null,color:null,bold:null})">서식 지우기</div>
+    ${rowIds.length >= 2 ? `<div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="mergeRangeRows()">⬛ 셀 병합 — ${rowIds.length}개 행 날짜 묶기</div>` : ''}
+    ${anyGrouped ? `<div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="unmergeRangeRows()">⬜ 병합 풀기</div>` : ''}`;
+  document.body.appendChild(_rowCtxEl);
+  const r = _rowCtxEl.getBoundingClientRect();
+  _rowCtxEl.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+  _rowCtxEl.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+}
+
+// 병합 = 물류 그룹 묶기 (해당 행들의 날짜 셀이 엑셀처럼 세로 병합 표시)
+function mergeRangeRows() {
+  const ids = _rangeRowIds();
+  closeRowCtxMenu();
+  groupSelected(ids);
+}
+function unmergeRangeRows() {
+  const ids = _rangeRowIds();
+  closeRowCtxMenu();
+  ungroupSelected(ids);
+}
 
 // 행 추가: 기준 행의 상품·발주일·차수·단가를 물려받은 빈 발주 행 (정렬상 바로 옆에 표시됨)
 async function addRowRelative(oid, where) {
@@ -3729,8 +3844,8 @@ function groupColor(id) {
   return `hsl(${h % 360}, 65%, 50%)`;
 }
 
-async function groupSelected() {
-  const ids = [...selectedOrders];
+async function groupSelected(idsArg) {
+  const ids = idsArg || [...selectedOrders];
   if (ids.length < 2) { showToast('2개 이상 선택해주세요'); return; }
   const gid = 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
   ids.forEach(id => {
@@ -3741,10 +3856,11 @@ async function groupSelected() {
   saveGroupsLocal();
   showToast(`${ids.length}건을 한 그룹으로 묶었습니다`);
   clearSelection();
+  renderBoard();
 }
 
-async function ungroupSelected() {
-  const ids = [...selectedOrders];
+async function ungroupSelected(idsArg) {
+  const ids = idsArg || [...selectedOrders];
   if (ids.length === 0) { showToast('선택된 항목이 없습니다'); return; }
   let cnt = 0;
   ids.forEach(id => {
@@ -3756,6 +3872,7 @@ async function ungroupSelected() {
   saveGroupsLocal();
   showToast(`${cnt}건을 그룹에서 제외했습니다`);
   clearSelection();
+  renderBoard();
 }
 
 // 정렬된 리스트에서 연속 같은 groupId 런 계산
