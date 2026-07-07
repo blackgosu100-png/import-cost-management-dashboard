@@ -828,6 +828,32 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
   </div>
 </div>
 
+<!-- Modal: 발주서 가져오기 -->
+<div class="modal-backdrop" id="po-modal">
+  <div class="modal" style="width:880px;max-width:95vw">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">발주서 가져오기</div>
+        <div class="modal-sub" id="po-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('po-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="display:flex;gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--text2)">발주일 <input type="date" id="po-date" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"></label>
+        <label style="font-size:11px;color:var(--text2)">차수 <input id="po-seq" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:70px"></label>
+        <label style="font-size:11px;color:var(--text2)">환율 <input id="po-rate" type="number" step="any" placeholder="예: 224.28" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px"></label>
+        <span style="font-size:11px;color:var(--text3)">발주일·차수는 파일명에서 자동 인식 — 다르면 고쳐주세요</span>
+      </div>
+      <div style="overflow:auto;max-height:52vh" id="po-preview-wrap"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('po-modal')">취소</button>
+      <button class="btn btn-primary" id="po-confirm-btn" onclick="confirmPO()">발주 등록</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: 붙여넣기 미리보기 -->
 <div class="modal-backdrop" id="paste-modal">
   <div class="modal" style="width:560px;max-width:92vw">
@@ -3546,6 +3572,10 @@ function importOrderExcel(input) {
       const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
       if (raw.length < 2) { showToast('데이터가 없습니다'); return; }
 
+      // 발주서 형식 자동 감지 (중국 발주서: 产品名/数量 헤더)
+      const poHeaderIdx = raw.slice(0, 12).findIndex(r => r.some(c => String(c).includes('产品名')));
+      if (poHeaderIdx !== -1) { parsePurchaseOrder(raw, poHeaderIdx, file.name); return; }
+
       // 헤더 행 찾기 (상품명 포함된 행)
       let headerIdx = 0;
       for (let i = 0; i < Math.min(5, raw.length); i++) {
@@ -3771,6 +3801,192 @@ function closeImportModal() {
   document.getElementById('import-confirm-btn').disabled = false;
   document.getElementById('import-confirm-btn').textContent = '가져오기 확정';
   _importRows = [];
+}
+
+// ─── 발주서(중국 오더시트) 가져오기 ──────────────────────────
+// 형식: No. | 图片 | 产品名 | 型号 | 选项名 | 尺寸 | 위안(￥) | 数量 | 合计 | 비고
+const PO_ALIAS_KEY = 'icd_po_alias_v1'; // 발주서 표기 → 제품 id 기억
+let _poRows = [];
+
+function poNorm(s) {
+  return String(s || '').toLowerCase().replace(/친마|[\s\-–—()\[\]\/·,.\n*]/g, '');
+}
+function poBigrams(s) {
+  const b = new Set();
+  for (let i = 0; i < s.length - 1; i++) b.add(s.slice(i, i + 2));
+  return b;
+}
+function poSim(a, b) {
+  a = poNorm(a); b = poNorm(b);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const A = poBigrams(a), B = poBigrams(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  A.forEach(x => { if (B.has(x)) inter++; });
+  return 2 * inter / (A.size + B.size);
+}
+
+function parsePurchaseOrder(raw, hIdx, filename) {
+  const headers = raw[hIdx].map(h => String(h).trim());
+  const col = kw => headers.findIndex(h => h.includes(kw));
+  const C = {
+    name: col('产品名'), model: col('型号'), opt: col('选项名'), size: col('尺寸'),
+    price: headers.findIndex(h => h.includes('위안') || (h.includes('￥') && !h.includes('合计'))),
+    qty: col('数量'),
+  };
+  if (C.name < 0 || C.qty < 0) { showToast('발주서 헤더를 인식하지 못했습니다'); return; }
+
+  let aliasMap = {};
+  try { aliasMap = JSON.parse(localStorage.getItem(PO_ALIAS_KEY) || '{}'); } catch (e) {}
+
+  _poRows = [];
+  for (let i = hIdx + 1; i < raw.length; i++) {
+    const r = raw[i];
+    const qtyCellStr = String(r[C.qty] ?? '').trim();
+    if (/合计|定金|잔금|합계/.test(qtyCellStr)) break;
+    const rawName = String(r[C.name] ?? '').trim();
+    const qty = parseFloat(r[C.qty]);
+    if (!rawName || !qty || qty <= 0) continue;
+    const price = C.price >= 0 ? (parseFloat(r[C.price]) || 0) : 0;
+    const size = C.size >= 0 ? String(r[C.size] ?? '').trim().replace(/\n/g, ' ') : '';
+    const dispName = rawName.replace(/\n/g, ' · ');
+    const key = poNorm(rawName + size);
+    // 후보 매칭: 기억된 연결 우선, 없으면 유사도 상위
+    const poText = rawName + ' ' + size;
+    const scored = products
+      .map(p => ({ pid: p.id, label: `${p.name} — ${p.option}`, score: poSim(poText, p.name + ' ' + p.option) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+    let sel = '', selSrc = '';
+    const alias = aliasMap[key];
+    if (alias && products.find(p => p.id === alias)) { sel = alias; selSrc = 'memory'; }
+    else if (scored[0] && scored[0].score >= 0.5) { sel = scored[0].pid; selSrc = 'auto'; }
+    _poRows.push({ rawName, dispName, size, price, qty, key, sel, selSrc, candidates: scored });
+  }
+  if (!_poRows.length) { showToast('발주서에서 상품 행을 찾지 못했습니다'); return; }
+
+  // 파일명에서 발주일·차수 추출 (예: "260522 양배추슬라이서 51차.xlsx")
+  const dm = filename.match(/^(\d{2})(\d{2})(\d{2})/);
+  document.getElementById('po-date').value = dm ? `20${dm[1]}-${dm[2]}-${dm[3]}` : today();
+  const sm = filename.match(/(\d+\s*차)/);
+  document.getElementById('po-seq').value = sm ? sm[1].replace(/\s/g, '') : '';
+  document.getElementById('po-rate').value = '';
+
+  renderPOPreview();
+  document.getElementById('po-modal').classList.add('open');
+}
+
+function renderPOPreview() {
+  const dupSeq = document.getElementById('po-seq').value.trim();
+  const rows = _poRows.map((r, i) => {
+    const isDup = r.sel && r.sel !== '__new__' &&
+      orders.some(o => o.pid === r.sel && o.orderSeq === dupSeq && dupSeq);
+    const srcTag = r.selSrc === 'memory'
+      ? `<span style="font-size:10px;color:var(--info);font-weight:600">기억된 연결</span>`
+      : r.selSrc === 'auto' && r.sel
+        ? `<span style="font-size:10px;color:var(--text3)">자동 매칭 ${(r.candidates[0]?.score * 100 | 0)}%</span>`
+        : '';
+    const opts = [
+      `<option value="">— 건너뜀</option>`,
+      `<option value="__new__" ${r.sel === '__new__' ? 'selected' : ''}>＋ 새 제품으로 등록</option>`,
+      ...r.candidates.map(c =>
+        `<option value="${c.pid}" ${r.sel === c.pid ? 'selected' : ''}>${c.label} (${(c.score * 100 | 0)}%)</option>`),
+    ].join('');
+    return `<tr style="${isDup ? 'opacity:.45' : ''}">
+      <td style="padding:6px 12px;font-size:11px;max-width:250px">${r.dispName}${r.size ? `<div style="font-size:10px;color:var(--text3)">${r.size}</div>` : ''}</td>
+      <td style="padding:6px 8px;font-size:11px;text-align:right;font-family:var(--mono)">¥${r.price}</td>
+      <td style="padding:6px 8px;font-size:11px;text-align:right;font-family:var(--mono)">${r.qty}</td>
+      <td style="padding:6px 12px">
+        <select onchange="_poRows[${i}].sel=this.value;_poRows[${i}].selSrc='user';renderPOPreview()" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px">${opts}</select>
+        <div style="margin-top:2px">${isDup ? `<span style="font-size:10px;color:var(--warning,#b45309);font-weight:600">같은 차수 중복 — 건너뜀</span>` : srcTag}</div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('po-preview-wrap').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;min-width:640px">
+      <thead style="position:sticky;top:0;background:var(--surface2);z-index:1">
+        <tr>
+          <th style="padding:8px 12px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">발주서 상품</th>
+          <th style="padding:8px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">단가 ¥</th>
+          <th style="padding:8px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">수량</th>
+          <th style="padding:8px 12px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border);width:330px">연결할 제품</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  const linked = _poRows.filter(r => r.sel && r.sel !== '__new__').length;
+  const news = _poRows.filter(r => r.sel === '__new__').length;
+  const skip = _poRows.filter(r => !r.sel).length;
+  document.getElementById('po-modal-sub').textContent =
+    `총 ${_poRows.length}행 — 기존 제품 연결 ${linked} · 새 제품 ${news} · 건너뜀 ${skip}`;
+}
+
+async function confirmPO() {
+  const btn = document.getElementById('po-confirm-btn');
+  const orderDate = document.getElementById('po-date').value;
+  const orderSeq = document.getElementById('po-seq').value.trim();
+  const rate = parseFloat(document.getElementById('po-rate').value) || 0;
+  if (!orderDate) { showToast('발주일을 입력해 주세요'); return; }
+  const targets = _poRows.filter(r => r.sel);
+  if (!targets.length) { showToast('등록할 행이 없습니다 — 연결할 제품을 선택해 주세요'); return; }
+  btn.disabled = true; btn.textContent = '등록 중...';
+
+  // 1. 새 제품 생성
+  const newProds = [];
+  for (const r of targets.filter(x => x.sel === '__new__')) {
+    const lines = r.rawName.split('\n').map(s => s.trim()).filter(Boolean);
+    const p = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      name: lines[0] || r.dispName, option: lines[1] || r.size || '기본',
+      pcode: '', ocode: '', cbm: 0, supplier: '', url: '', imageUrl: '',
+    };
+    products.push(p);
+    newProds.push(p);
+    r.sel = p.id;
+  }
+  if (newProds.length) {
+    const { error } = await sb.from('products').upsert(newProds.map(p => ({
+      id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
+      cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: null,
+    })));
+    if (error) {
+      btn.disabled = false; btn.textContent = '발주 등록';
+      showToast('제품 저장 실패: ' + error.message);
+      return;
+    }
+  }
+
+  // 2. 발주 생성 (같은 차수 중복 건너뜀)
+  const newOrders = [];
+  let dups = 0;
+  let aliasMap = {};
+  try { aliasMap = JSON.parse(localStorage.getItem(PO_ALIAS_KEY) || '{}'); } catch (e) {}
+  for (const r of targets) {
+    if (orders.some(o => o.pid === r.sel && o.orderSeq === orderSeq && orderSeq)) { dups++; continue; }
+    newOrders.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      pid: r.sel, qty: r.qty, rate, price: r.price, orderSeq,
+      orderDate, factoryDate: '', factoryMemo: '', whDate: '', shipDate: '', arriveDate: '',
+      shipTag: '', costPerUnit: null, extraCosts: [], status: 'active',
+    });
+    aliasMap[r.key] = r.sel; // 이 발주서 표기 → 제품 연결 기억
+  }
+  try { localStorage.setItem(PO_ALIAS_KEY, JSON.stringify(aliasMap)); } catch (e) {}
+
+  if (newOrders.length) {
+    orders.push(...newOrders);
+    await bulkSyncOrders(newOrders);
+  }
+  saveCache();
+  renderBoard();
+  btn.disabled = false; btn.textContent = '발주 등록';
+  document.getElementById('po-modal').classList.remove('open');
+  showToast(`발주 ${newOrders.length}건 등록${newProds.length ? ` · 새 제품 ${newProds.length}개` : ''}${dups ? ` · 중복 ${dups}건 건너뜀` : ''}`);
+  await logActivity('create', 'order', 'po-import', `발주서 가져오기: ${orderSeq || orderDate} ${newOrders.length}건`);
+  _poRows = [];
 }
 </script>
 </body>
