@@ -18,4 +18,5 @@ alter table products
   add column if not exists ship_cost numeric,    -- 선적비용
   add column if not exists final_cost numeric,   -- 최종원가
   add column if not exists list_price numeric,   -- 정상가
-  add column if not exists guide text;           -- 제품 전달 가이드(3PL)
+  add column if not exists guide text,           -- 제품 전달 가이드(3PL)
+  add column if not exists sort_order integer;   -- 엑셀 원본 행 순서 (제품 DB 정렬 기준)

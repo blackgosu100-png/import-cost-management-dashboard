@@ -1122,7 +1122,10 @@ async function loadData() {
     freightType: p.freight_type || '', nameEn: p.name_en || '', lastBuy: p.last_buy,
     curBuy: p.cur_buy, buyKrw: p.buy_krw, shipCost: p.ship_cost,
     finalCost: p.final_cost, listPrice: p.list_price, guide: p.guide || '',
+    sortOrder: p.sort_order,
   }));
+  // 엑셀 원본 순서 우선 정렬 (순서 없는 제품은 뒤로)
+  products.sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   orders = (oData || []).map(o => ({
     id: o.id, pid: o.pid, shipTag: o.ship_tag || '', qty: o.qty, rate: o.rate, price: o.price,
     orderDate: o.order_date || '', factoryDate: o.factory_date || '', factoryMemo: o.factory_memo || '',
@@ -1182,6 +1185,7 @@ async function syncProduct(p) {
     last_buy: p.lastBuy ?? null, cur_buy: p.curBuy ?? null, buy_krw: p.buyKrw ?? null,
     ship_cost: p.shipCost ?? null, final_cost: p.finalCost ?? null,
     list_price: p.listPrice ?? null, guide: p.guide || null,
+    sort_order: p.sortOrder ?? null,
   });
   const { error } = await sb.from('products').upsert(payload);
   if (error) throw error;
@@ -2851,7 +2855,9 @@ async function importProductDb2(rows) {
 
   let updated = 0, created = 0;
   const touched = [];
+  let ord = 0;
   for (const it of items) {
+    ord++;
     let p = (it.pcode && it.ocode && products.find(x => x.pcode === it.pcode && x.ocode === it.ocode))
       || products.find(x => x.name === it.name && x.option === it.option);
     if (p) {
@@ -2866,6 +2872,7 @@ async function importProductDb2(rows) {
         lastBuy: it.lastBuy ?? p.lastBuy, curBuy: it.curBuy ?? p.curBuy, buyKrw: it.buyKrw ?? p.buyKrw,
         shipCost: it.shipCost ?? p.shipCost, finalCost: it.finalCost ?? p.finalCost,
         listPrice: it.listPrice ?? p.listPrice, guide: it.guide || p.guide,
+        sortOrder: ord,
       });
       updated++;
     } else {
@@ -2877,7 +2884,7 @@ async function importProductDb2(rows) {
         parcelFee: it.parcelFee, parcelFee2: it.parcelFee2, costKrw: it.costKrw, salePrice: it.salePrice,
         freightType: it.freightType, nameEn: it.nameEn, lastBuy: it.lastBuy, curBuy: it.curBuy,
         buyKrw: it.buyKrw, shipCost: it.shipCost, finalCost: it.finalCost, listPrice: it.listPrice,
-        guide: it.guide,
+        guide: it.guide, sortOrder: ord,
       };
       products.push(p);
       created++;
@@ -2898,9 +2905,11 @@ async function importProductDb2(rows) {
       last_buy: p.lastBuy ?? null, cur_buy: p.curBuy ?? null, buy_krw: p.buyKrw ?? null,
       ship_cost: p.shipCost ?? null, final_cost: p.finalCost ?? null,
       list_price: p.listPrice ?? null, guide: p.guide || null,
+      sort_order: p.sortOrder ?? null,
     })));
     if (error) { showToast('저장 실패: ' + error.message); return; }
   }
+  products.sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9)); // 엑셀 순서로 즉시 정렬
   saveCache();
   renderProductView();
   renderBoard();
