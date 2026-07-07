@@ -453,6 +453,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
         발주 엑셀 가져오기
       </button>
       <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="display:none" onchange="importOrderExcel(this)">
+      <button class="btn btn-sm btn-ghost" onclick="openCleanupModal()" title="기준일 이전의 오래된 발주 삭제" style="color:var(--text3)">🧹 데이터 정리</button>
     </div>
 
     <!-- 오늘 할 일 바 -->
@@ -888,6 +889,35 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
     <div class="modal-body">
       <p id="ship-conflict-msg" style="margin:0 0 16px;font-size:13px;line-height:1.7;color:var(--text2)"></p>
       <div id="ship-conflict-btns" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 데이터 정리 -->
+<div class="modal-backdrop" id="cleanup-modal">
+  <div class="modal" style="width:440px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🧹 데이터 정리</div>
+        <div class="modal-sub">오래된 발주를 삭제해 보드를 가볍게 유지합니다</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('cleanup-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">기준일</label>
+        <input class="form-input" type="date" id="cleanup-date" value="2026-05-01" onchange="analyzeCleanup()">
+      </div>
+      <p style="font-size:12px;color:var(--text2);line-height:1.7;margin:10px 0 0">
+        발주일·선적일·국내입고 중 <b>하나라도 기준일 이후</b>인 발주는 남기고,
+        전부 기준일 이전(또는 날짜 없음)인 발주만 삭제합니다.<br>
+        <span style="color:var(--danger)">삭제는 되돌릴 수 없어요.</span> 원본 엑셀 대장이 보관본입니다.
+      </p>
+      <div id="cleanup-summary" style="margin-top:14px;padding:10px 14px;background:var(--surface2);border-radius:8px;font-size:12.5px;line-height:1.8"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('cleanup-modal')">취소</button>
+      <button class="btn btn-primary" id="cleanup-confirm-btn" onclick="confirmCleanup()" style="background:var(--danger);border-color:var(--danger)">삭제 실행</button>
     </div>
   </div>
 </div>
@@ -1544,7 +1574,6 @@ function renderBoard() {
 
     const run = groupRuns[o.id];
     const stripe = run ? `box-shadow: inset 3px 0 0 0 ${run.color};` : '';
-    if (run && run.isEnd) tr.style.borderBottom = '2px solid #94a3b8';
     // 그룹(rowspan) 셀 편집 시 멤버 전체에 적용하기 위한 id 목록
     const runOids = run && run.isStart
       ? filtered.slice(_fi, _fi + run.size).map(x => x.id).join(',')
@@ -4262,6 +4291,64 @@ function closeImportModal() {
   document.getElementById('import-confirm-btn').disabled = false;
   document.getElementById('import-confirm-btn').textContent = '가져오기 확정';
   _importRows = [];
+}
+
+// ─── 데이터 정리: 기준일 이전 발주 일괄 삭제 ─────────────────
+function cleanupTargets() {
+  const cutoff = document.getElementById('cleanup-date').value;
+  if (!cutoff) return { keep: [], del: [] };
+  const keep = [], del = [];
+  orders.forEach(o => {
+    const recent = [o.orderDate, o.shipDate, o.arriveDate].some(d => d && d >= cutoff);
+    (recent ? keep : del).push(o);
+  });
+  return { keep, del };
+}
+
+function analyzeCleanup() {
+  const { keep, del } = cleanupTargets();
+  const delDone = del.filter(o => o.arriveDate).length;
+  document.getElementById('cleanup-summary').innerHTML =
+    `전체 <b>${orders.length}건</b> 중<br>
+     🗑 삭제 대상: <b style="color:var(--danger)">${del.length}건</b> (입고완료 ${delDone}건 · 날짜없음/미완료 ${del.length - delDone}건)<br>
+     ✅ 유지: <b>${keep.length}건</b>`;
+  document.getElementById('cleanup-confirm-btn').textContent = del.length ? `${del.length}건 삭제 실행` : '삭제할 건 없음';
+  document.getElementById('cleanup-confirm-btn').disabled = !del.length;
+}
+
+function openCleanupModal() {
+  analyzeCleanup();
+  document.getElementById('cleanup-modal').classList.add('open');
+}
+
+async function confirmCleanup() {
+  const { del } = cleanupTargets();
+  if (!del.length) return;
+  const cutoff = document.getElementById('cleanup-date').value;
+  if (!confirm(`${cutoff} 이전 발주 ${del.length}건을 삭제합니다.\n이 작업은 되돌릴 수 없습니다. 계속할까요?`)) return;
+  const btn = document.getElementById('cleanup-confirm-btn');
+  btn.disabled = true;
+  const ids = del.map(o => o.id);
+  let removed = 0, failed = false;
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const { error } = await sb.from('orders').delete().in('id', chunk);
+    if (error) { failed = true; showToast(`삭제 중단 (${removed}건 삭제 후 오류): ` + error.message); break; }
+    removed += chunk.length;
+    btn.textContent = `삭제 중... ${removed}/${ids.length}`;
+  }
+  const removedSet = new Set(ids.slice(0, removed));
+  orders = orders.filter(o => !removedSet.has(o.id));
+  saveCache();
+  renderBoard();
+  btn.disabled = false;
+  if (!failed) {
+    document.getElementById('cleanup-modal').classList.remove('open');
+    showToast(`오래된 발주 ${removed}건 삭제 완료 — ${orders.length}건 유지`);
+    await logActivity('delete', 'order', 'cleanup', `데이터 정리: ${cutoff} 이전 ${removed}건 삭제`);
+  } else {
+    analyzeCleanup();
+  }
 }
 
 // ─── 발주서(중국 오더시트) 가져오기 ──────────────────────────
