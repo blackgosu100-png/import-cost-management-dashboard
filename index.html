@@ -6,6 +6,7 @@
 <title>친절한마이쮸 — 수출입 원가관리</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -733,12 +734,16 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       <hr class="form-divider">
       <div class="form-section">
         <div class="form-section-title">청구서 파일 보관</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">
+            🤖 정산서 PDF 자동 인식
+            <input type="file" id="c-pdf-auto" accept=".pdf" multiple style="display:none" onchange="parseSettlementPdfs(this)">
+          </label>
           <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--text2);font-weight:500">
             &#8679; 청구서 업로드
             <input type="file" id="c-invoice-file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:none" onchange="handleInvoiceUpload(event)">
           </label>
-          <span style="font-size:11px;color:var(--text3)">PDF, JPG, PNG 지원</span>
+          <span style="font-size:11px;color:var(--text3)">자동 인식: 포워더 인보이스·관세사 자금청구서 (여러 개 동시 선택 가능)</span>
           <span id="c-invoice-uploading" style="display:none;font-size:11px;color:var(--info)">업로드 중...</span>
         </div>
         <div id="c-invoice-list"></div>
@@ -893,6 +898,29 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
     <div class="modal-body">
       <p id="ship-conflict-msg" style="margin:0 0 16px;font-size:13px;line-height:1.7;color:var(--text2)"></p>
       <div id="ship-conflict-btns" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 정산서 PDF 자동 인식 미리보기 -->
+<div class="modal-backdrop" id="pdfcost-modal">
+  <div class="modal" style="width:640px;max-width:94vw">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🤖 정산서 자동 인식</div>
+        <div class="modal-sub" id="pdfcost-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('pdfcost-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="overflow:auto;max-height:55vh" id="pdfcost-wrap"></div>
+      <div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">
+        반영 항목을 확인·수정한 뒤 적용하세요. 금액은 기존 입력값에 <b>더해집니다</b> — 같은 PDF를 두 번 적용하면 중복돼요.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('pdfcost-modal')">취소</button>
+      <button class="btn btn-primary" id="pdfcost-apply-btn" onclick="applyPdfCost()">원가 입력에 반영</button>
     </div>
   </div>
 </div>
@@ -4508,6 +4536,130 @@ function closeImportModal() {
   document.getElementById('import-confirm-btn').disabled = false;
   document.getElementById('import-confirm-btn').textContent = '가져오기 확정';
   _importRows = [];
+}
+
+// ─── 정산서 PDF 자동 인식 → 원가 입력 반영 ──────────────────
+const PDF_TARGETS = ['해운비', 'B/L수수료', 'DO요금', '원산지', '관세', '부가세', '통관수수료', '내륙운송비', '장치료', '검사비 추가', '기타', '제외'];
+let _pdfCostItems = [];
+
+async function pdfTextLines(file) {
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const doc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const lines = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    const rows = {};
+    tc.items.forEach(it => {
+      const y = Math.round(it.transform[5] / 3) * 3; // 같은 줄로 묶기 (3pt 오차 허용)
+      (rows[y] = rows[y] || []).push({ x: it.transform[4], s: it.str });
+    });
+    Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
+      lines.push(rows[y].sort((a, b) => a.x - b.x).map(i => i.s).join(' ').replace(/\s+/g, ' ').trim());
+    });
+  }
+  return lines;
+}
+
+// 항목 라벨 → 기본 반영 위치 (먼저 맞는 규칙 우선)
+const PDF_RULES = [
+  { re: /LOCAL\s*DOC/i, t: '해운비' },
+  { re: /DOCUMENT\s*FEE|B\/?L\s*발행/i, t: 'B/L수수료' },
+  { re: /DELIVERY\s*ORDER|D\/O\b/i, t: 'DO요금' },
+  { re: /C\/?O\s*FEE|원산지/i, t: '원산지' },
+  { re: /TRUCKING|내륙운송|국내운송/i, t: '내륙운송비' },
+  { re: /검역|검사비/, t: '검사비 추가' },
+  { re: /OCEAN|SURCHARGE|SURPHUR|LSS|THC|WHARFAGE|CONTAINER\s*CLEAR|HANDLING|INSURANCE|EXW|CFS|CUSTOMS\s*CLEARANC|해운|해상운임/i, t: '해운비' },
+  { re: /부가가치세|부가세/, t: '부가세' },
+  { re: /관세(?!사)/, t: '관세' },
+  { re: /통관\s*수수료|통관료/, t: '통관수수료' },
+  { re: /장치료|보관료/, t: '장치료' },
+  { re: /수입요건|요건수수료|취급수수료|대행수수료/, t: '기타' },
+];
+
+function pdfLineAmount(line) {
+  // 정수 금액만 인식 (300.00 같은 단가·환율 제외), 끝 숫자가 직전의 10%면 VAT로 보고 합산
+  const nums = [...line.matchAll(/\d{1,3}(?:,\d{3})+|\d{4,}/g)]
+    .filter(m => line[m.index + m[0].length] !== '.')
+    .map(m => parseInt(m[0].replace(/,/g, ''), 10))
+    .filter(n => n >= 500);
+  if (!nums.length) return null;
+  const last = nums[nums.length - 1], prev = nums[nums.length - 2];
+  if (prev && Math.abs(prev * 0.1 - last) <= 2) return prev + last; // 공급가+부가세
+  return last;
+}
+
+async function parseSettlementPdfs(input) {
+  const files = [...input.files];
+  input.value = '';
+  if (!files.length) return;
+  if (!window.pdfjsLib) { showToast('PDF 라이브러리 로딩 실패 — 인터넷 연결을 확인해 주세요'); return; }
+  showToast('PDF 인식 중...');
+  _pdfCostItems = [];
+  const skipRe = /SUB\s*TOTAL|TOTAL|합\s*계|입금|계좌|은행|Printed|Signature/i;
+  for (const f of files) {
+    try {
+      const lines = await pdfTextLines(f);
+      const seen = new Set();
+      for (const line of lines) {
+        if (skipRe.test(line)) continue;
+        const rule = PDF_RULES.find(r => r.re.test(line));
+        if (!rule) continue;
+        const amt = pdfLineAmount(line);
+        if (!amt) continue;
+        const label = line.replace(/[\d,]+(\.\d+)?/g, '').replace(/\s+/g, ' ').trim().slice(0, 42) || rule.t;
+        const key = label + ':' + amt;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        _pdfCostItems.push({ file: f.name, label, amount: amt, target: rule.t });
+      }
+    } catch (e) {
+      showToast(`${f.name} 인식 실패: ` + e.message);
+    }
+  }
+  if (!_pdfCostItems.length) { showToast('인식된 비용 항목이 없습니다'); return; }
+  renderPdfCostPreview();
+  document.getElementById('pdfcost-modal').classList.add('open');
+}
+
+function renderPdfCostPreview() {
+  const total = _pdfCostItems.filter(i => i.target !== '제외').reduce((s, i) => s + i.amount, 0);
+  document.getElementById('pdfcost-sub').textContent =
+    `${_pdfCostItems.length}개 항목 인식 · 반영 합계 ₩${total.toLocaleString()}`;
+  document.getElementById('pdfcost-wrap').innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead style="position:sticky;top:0;background:var(--surface2);z-index:1"><tr>
+        <th style="padding:7px 14px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">인식된 항목</th>
+        <th style="padding:7px 14px;font-size:11px;text-align:right;border-bottom:1px solid var(--border)">금액</th>
+        <th style="padding:7px 14px;font-size:11px;text-align:left;border-bottom:1px solid var(--border);width:150px">반영 위치</th>
+      </tr></thead>
+      <tbody>${_pdfCostItems.map((it, i) => `
+        <tr style="border-bottom:1px solid var(--border);${it.target === '제외' ? 'opacity:.4' : ''}">
+          <td style="padding:6px 14px;font-size:11px">${it.label}<div style="font-size:10px;color:var(--text3)">${it.file}</div></td>
+          <td style="padding:6px 14px;font-size:12px;text-align:right;font-family:var(--mono);font-weight:600">₩${it.amount.toLocaleString()}</td>
+          <td style="padding:6px 14px"><select onchange="_pdfCostItems[${i}].target=this.value;renderPdfCostPreview()" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:6px;font-size:11px">
+            ${PDF_TARGETS.map(t => `<option ${it.target === t ? 'selected' : ''}>${t}</option>`).join('')}
+          </select></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function applyPdfCost() {
+  const add = (id, v) => { const el = document.getElementById(id); el.value = Math.round((parseFloat(el.value) || 0) + v); };
+  const sums = {};
+  _pdfCostItems.forEach(it => { if (it.target !== '제외') sums[it.target] = (sums[it.target] || 0) + it.amount; });
+  if (sums['해운비']) add('c-freight', sums['해운비']);
+  if (sums['B/L수수료']) add('c-bl', sums['B/L수수료']);
+  if (sums['DO요금']) add('c-do', sums['DO요금']);
+  if (sums['원산지']) add('c-origin', sums['원산지']);
+  // 2차 통관 항목은 개별 행으로 추가 (메모에 출처 표시)
+  _pdfCostItems.filter(it => ['관세', '부가세', '통관수수료', '내륙운송비', '장치료', '검사비 추가', '기타'].includes(it.target))
+    .forEach(it => addCostEntry({ type: it.target === '기타' ? it.label.slice(0, 20) : it.target, amount: it.amount, note: 'PDF 자동 인식: ' + it.file }));
+  calcCostPreview();
+  document.getElementById('pdfcost-modal').classList.remove('open');
+  showToast('원가 입력에 반영됐어요 — 금액 확인 후 저장하세요');
+  _pdfCostItems = [];
 }
 
 // ─── 데이터 정리: 기준일 이전 발주 일괄 삭제 ─────────────────
