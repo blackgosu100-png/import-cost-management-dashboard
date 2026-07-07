@@ -2894,8 +2894,10 @@ async function importProductDb2(rows) {
   if (!confirm(`상품 DB 원본 ${items.length}행 인식\n· 기존 제품 정보 갱신: ${updated}건\n· 신규 등록: ${created}건\n\n적용할까요?`)) {
     await loadData(); renderProductView(); return;
   }
-  for (let i = 0; i < touched.length; i += 100) {
-    const { error } = await sb.from('products').upsert(touched.slice(i, i + 100).map(p => ({
+  // 엑셀 내 중복 행이 같은 제품을 두 번 갱신하면 upsert가 거부되므로 id 기준 중복 제거
+  const uniq = [...new Map(touched.map(p => [p.id, p])).values()];
+  for (let i = 0; i < uniq.length; i += 100) {
+    const { error } = await sb.from('products').upsert(uniq.slice(i, i + 100).map(p => ({
       id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
       cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
       brand: p.brand || null, barcode: p.barcode || null, box_size: p.boxSize || null,
