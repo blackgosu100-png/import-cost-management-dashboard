@@ -266,6 +266,8 @@ th.col-filtered { color: var(--accent); }
 /* ─── 열 리사이즈 중 성능 최적화 ─────────────────── */
 body.col-resizing .board-table tbody { pointer-events: none; }
 body.col-resizing .board-table tbody tr.data-row { transition: none; }
+.col-resize-guide { position: fixed; width: 2px; background: #2563eb; z-index: 250; pointer-events: none; }
+.col-resize-guide::after { content: attr(data-w); position: absolute; top: 6px; left: 6px; background: #1a1a18; color: #fff; font-size: 11px; padding: 2px 7px; border-radius: 5px; font-family: var(--mono); white-space: nowrap; }
 
 /* ─── 오늘 할 일 바 ──────────────────────────────── */
 .todo-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 20px 2px; }
@@ -3539,7 +3541,7 @@ function computeGroupRuns(list) {
 // ─── 컬럼 리사이즈 ───────────────────────────────────────────
 let _rsCol = null, _rsStartX = 0, _rsStartW = 0;
 
-let _rsTable = null, _rsTableW = 0, _rsLastX = 0, _rsRaf = null;
+let _rsTable = null, _rsTableW = 0, _rsLastX = 0, _rsRaf = null, _rsGuide = null, _rsColLeft = 0;
 
 function startResize(e, handle) {
   e.stopPropagation();
@@ -3547,8 +3549,7 @@ function startResize(e, handle) {
   _rsCol = handle.parentElement;
   _rsStartX = _rsLastX = e.clientX;
   _rsTable = document.getElementById('board-table');
-  // 모든 열을 현재 렌더링 폭으로 동결 — 남는 공간 재분배가 사라져
-  // 잡은 열만 마우스를 그대로 따라온다 (읽기 전부 → 쓰기 전부 순서로 리플로우 1회)
+  // 모든 열을 현재 렌더링 폭으로 동결 (리플로우 1회) — 놓는 순간 정확히 그 열만 변경
   const ths = [..._rsTable.querySelectorAll('thead th')];
   const widths = ths.map(t => t.getBoundingClientRect().width);
   ths.forEach((t, i) => t.style.width = widths[i] + 'px');
@@ -3556,30 +3557,48 @@ function startResize(e, handle) {
   _rsTableW = widths.reduce((a, b) => a + b, 0);
   _rsTable.style.width = _rsTableW + 'px';
   _rsTable.style.minWidth = '0';
+  _rsColLeft = _rsCol.getBoundingClientRect().left;
+  // 엑셀 방식: 드래그 중엔 세로 안내선만 이동 (레이아웃 0회), 놓을 때 한 번에 적용
+  const area = _rsTable.getBoundingClientRect();
+  _rsGuide = document.createElement('div');
+  _rsGuide.className = 'col-resize-guide';
+  _rsGuide.style.top = Math.max(0, area.top) + 'px';
+  _rsGuide.style.height = Math.min(window.innerHeight, area.bottom) - Math.max(0, area.top) + 'px';
+  document.body.appendChild(_rsGuide);
+  _moveGuide();
   handle.classList.add('resizing');
   document.body.style.cursor = 'col-resize';
   document.body.style.userSelect = 'none';
   document.body.classList.add('col-resizing'); // 드래그 중 행 hover/이벤트 계산 차단
 }
 
-function _applyResize() {
+function _rsWidth() {
+  return Math.round(Math.max(40, _rsStartW + (_rsLastX - _rsStartX)));
+}
+
+function _moveGuide() {
   _rsRaf = null;
-  if (!_rsCol) return;
-  const w = Math.max(40, _rsStartW + (_rsLastX - _rsStartX));
-  _rsCol.style.width = w + 'px';
-  _rsTable.style.width = (_rsTableW + (w - _rsStartW)) + 'px';
+  if (!_rsGuide) return;
+  const w = _rsWidth();
+  _rsGuide.style.left = (_rsColLeft + w) + 'px';
+  _rsGuide.dataset.w = w + 'px';
 }
 
 document.addEventListener('mousemove', e => {
   if (!_rsCol) return;
   _rsLastX = e.clientX;
-  // 프레임당 1회만 레이아웃 반영 (rAF 스로틀)
-  if (!_rsRaf) _rsRaf = requestAnimationFrame(_applyResize);
+  if (!_rsRaf) _rsRaf = requestAnimationFrame(_moveGuide);
 });
 
 document.addEventListener('mouseup', () => {
   if (!_rsCol) return;
-  if (_rsRaf) { cancelAnimationFrame(_rsRaf); _applyResize(); }
+  if (_rsRaf) cancelAnimationFrame(_rsRaf);
+  _rsRaf = null;
+  // 놓는 순간 한 번만 실제 폭 적용
+  const w = _rsWidth();
+  _rsCol.style.width = w + 'px';
+  _rsTable.style.width = (_rsTableW + (w - _rsStartW)) + 'px';
+  if (_rsGuide) { _rsGuide.remove(); _rsGuide = null; }
   document.querySelectorAll('.col-resizer').forEach(r => r.classList.remove('resizing'));
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
