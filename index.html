@@ -514,7 +514,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
 
   <!-- Product View -->
   <div id="view-product" style="display:none;flex:1;overflow:auto;padding:24px">
-    <div style="max-width:900px;margin:0 auto">
+    <div style="max-width:1560px;margin:0 auto">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <div style="font-size:14px;font-weight:600;color:var(--text)">제품 DB</div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -1107,9 +1107,14 @@ async function loadData() {
   if (pErr) console.error('products 로드 실패:', pErr);
   if (oErr) console.error('orders 로드 실패:', oErr);
   if (sgErr) console.error('ship_groups 로드 실패:', sgErr);
+  // 스키마 v2(brand 등) 적용 여부 자동 감지 — 마이그레이션 전에도 저장이 깨지지 않게
+  window._prodSchemaV2 = !!(pData && pData[0] && 'brand' in pData[0]);
   products = (pData || []).map(p => ({
     id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
     cbm: p.cbm, supplier: p.supplier, url: p.url, imageUrl: p.image_url,
+    brand: p.brand || '', barcode: p.barcode || '', boxSize: p.box_size || '',
+    dimSum: p.dim_sum, parcelFee: p.parcel_fee, parcelFee2: p.parcel_fee2,
+    costKrw: p.cost_krw, salePrice: p.sale_price,
   }));
   orders = (oData || []).map(o => ({
     id: o.id, pid: o.pid, shipTag: o.ship_tag || '', qty: o.qty, rate: o.rate, price: o.price,
@@ -1158,10 +1163,16 @@ async function syncProduct(p) {
   if (p.imageUrl && p.imageUrl.startsWith('data:')) {
     p.imageUrl = await uploadProductImage(p.imageUrl);
   }
-  const { error } = await sb.from('products').upsert({
+  const payload = {
     id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
     cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
+  };
+  if (window._prodSchemaV2) Object.assign(payload, {
+    brand: p.brand || null, barcode: p.barcode || null, box_size: p.boxSize || null,
+    dim_sum: p.dimSum ?? null, parcel_fee: p.parcelFee ?? null, parcel_fee2: p.parcelFee2 ?? null,
+    cost_krw: p.costKrw ?? null, sale_price: p.salePrice ?? null,
   });
+  const { error } = await sb.from('products').upsert(payload);
   if (error) throw error;
 }
 
@@ -2800,49 +2811,162 @@ function buildGroupCardHtml(key, sgOrders, autoExpand) {
 }
 
 // ─── 제품 DB 뷰 ──────────────────────────────────────────────
+// ─── 상품DB 원본 엑셀(상품db2) 가져오기 — 기존 제품 갱신 + 신규 등록 ──
+async function importProductDb2(rows) {
+  if (!window._prodSchemaV2) {
+    alert('제품 DB 확장 컬럼이 아직 없습니다.\n프로젝트 폴더의 migration_products_v2.sql 을 Supabase SQL Editor에서 먼저 실행한 뒤, 새로고침하고 다시 시도해 주세요.');
+    return;
+  }
+  const S = v => String(v ?? '').trim();
+  const N = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; };
+  const items = rows.map(r => ({
+    brand: S(r['브랜드']), name: S(r['제품명']), option: S(r['옵션']),
+    barcode: S(r['바코드']), pcode: S(r['자체상품코드']), ocode: S(r['자체옵션코드']),
+    boxSize: S(r['박스사이즈']), dimSum: N(r['3면합(cm)']),
+    parcelFee: N(r['(인터지스)택배+작업']), parcelFee2: N(r['(심비)택배비']),
+    costKrw: N(r['원가']), salePrice: N(r['사이트판매가']), url: S(r['제품참조링크']),
+  })).filter(x => x.name && x.name !== '3PL출고제품 (오픈마켓,로켓,그로스)');
+  if (!items.length) { showToast('가져올 상품 행이 없습니다'); return; }
+
+  let updated = 0, created = 0;
+  const touched = [];
+  for (const it of items) {
+    let p = (it.pcode && it.ocode && products.find(x => x.pcode === it.pcode && x.ocode === it.ocode))
+      || products.find(x => x.name === it.name && x.option === it.option);
+    if (p) {
+      Object.assign(p, {
+        brand: it.brand || p.brand, barcode: it.barcode || p.barcode,
+        pcode: it.pcode || p.pcode, ocode: it.ocode || p.ocode,
+        boxSize: it.boxSize || p.boxSize, dimSum: it.dimSum ?? p.dimSum,
+        parcelFee: it.parcelFee ?? p.parcelFee, parcelFee2: it.parcelFee2 ?? p.parcelFee2,
+        costKrw: it.costKrw ?? p.costKrw, salePrice: it.salePrice ?? p.salePrice,
+        url: it.url || p.url,
+      });
+      updated++;
+    } else {
+      p = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+        name: it.name, option: it.option || '기본', pcode: it.pcode, ocode: it.ocode,
+        cbm: 0, supplier: '', url: it.url, imageUrl: '',
+        brand: it.brand, barcode: it.barcode, boxSize: it.boxSize, dimSum: it.dimSum,
+        parcelFee: it.parcelFee, parcelFee2: it.parcelFee2, costKrw: it.costKrw, salePrice: it.salePrice,
+      };
+      products.push(p);
+      created++;
+    }
+    touched.push(p);
+  }
+  if (!confirm(`상품 DB 원본 ${items.length}행 인식\n· 기존 제품 정보 갱신: ${updated}건\n· 신규 등록: ${created}건\n\n적용할까요?`)) {
+    await loadData(); renderProductView(); return;
+  }
+  for (let i = 0; i < touched.length; i += 100) {
+    const { error } = await sb.from('products').upsert(touched.slice(i, i + 100).map(p => ({
+      id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
+      cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: p.imageUrl || null,
+      brand: p.brand || null, barcode: p.barcode || null, box_size: p.boxSize || null,
+      dim_sum: p.dimSum ?? null, parcel_fee: p.parcelFee ?? null, parcel_fee2: p.parcelFee2 ?? null,
+      cost_krw: p.costKrw ?? null, sale_price: p.salePrice ?? null,
+    })));
+    if (error) { showToast('저장 실패: ' + error.message); return; }
+  }
+  saveCache();
+  renderProductView();
+  renderBoard();
+  showToast(`상품 DB 반영 완료 — 갱신 ${updated} · 신규 ${created}`);
+  logActivity('update', 'product', 'db2-import', `상품DB 가져오기: 갱신 ${updated}, 신규 ${created}`);
+}
+
+// ─── 제품 DB: 엑셀형 그리드 (상품db2 구조 반영) ──────────────
+let _pvSearch = '', _pvBrand = '';
+const PV_COLS = [
+  { f: 'brand', label: '브랜드', w: 84 },
+  { f: 'name', label: '제품명', w: 170, left: true },
+  { f: 'option', label: '옵션', w: 110, left: true },
+  { f: 'pcode', label: '상품코드', w: 86, mono: true },
+  { f: 'ocode', label: '옵션코드', w: 92, mono: true },
+  { f: 'barcode', label: '바코드', w: 110, mono: true },
+  { f: 'boxSize', label: '박스사이즈', w: 96, mono: true },
+  { f: 'dimSum', label: '3면합', w: 60, num: true },
+  { f: 'parcelFee', label: '택배비', w: 74, num: true },
+  { f: 'costKrw', label: '원가', w: 80, num: true },
+  { f: '_total', label: '원가+택배', w: 86, num: true, calc: true },
+  { f: 'salePrice', label: '판매가', w: 80, num: true },
+];
+
 function renderProductView() {
   const el = document.getElementById('product-view-content');
-  // Group by name
-  const byName = {};
-  products.forEach(p => {
-    if (!byName[p.name]) byName[p.name] = [];
-    byName[p.name].push(p);
+  const brands = [...new Set(products.map(p => p.brand).filter(Boolean))].sort();
+  const q = _pvSearch.toLowerCase();
+  const list = products.filter(p => {
+    if (_pvBrand && p.brand !== _pvBrand) return false;
+    if (q && !(p.name + p.option + (p.pcode||'') + (p.ocode||'') + (p.barcode||'')).toLowerCase().includes(q)) return false;
+    return true;
   });
-  let html = '';
-  Object.entries(byName).forEach(([name, prods]) => {
-    html += `<div style="border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:12px;overflow:hidden">
-      <div style="background:var(--bg);padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text)">${name} <span style="font-size:11px;color:var(--text3);font-weight:400">(${prods.length}개 옵션)</span></div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:var(--surface)">
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border);width:56px">이미지</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">옵션명</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">상품코드</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">옵션코드</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">CBM</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">공급처</th>
-          <th style="padding:7px 12px;font-size:11px;color:var(--text3);text-align:center;font-weight:500;border-bottom:1px solid var(--border)">발주이력</th>
-        </tr></thead>
-        <tbody>
-          ${prods.map(p => {
-            const cnt = orders.filter(o => o.pid === p.id).length;
-            const imgHtml = p.imageUrl
-              ? `<img src="${p.imageUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border)" onerror="this.style.display='none'">`
-              : `<div style="width:40px;height:40px;border-radius:4px;border:1px dashed var(--border2);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--border2)">+</div>`;
-            return `<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="openEditProductModal('${p.id}')" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''">
-              <td style="padding:6px 12px;text-align:center">${imgHtml}</td>
-              <td style="padding:8px 12px;font-size:12px;font-weight:500;text-align:center">${p.option}</td>
-              <td style="padding:8px 12px;font-size:11px;font-family:var(--mono);color:var(--text2);text-align:center">${p.pcode || '—'}</td>
-              <td style="padding:8px 12px;font-size:11px;font-family:var(--mono);color:var(--text2);text-align:center">${p.ocode || '—'}</td>
-              <td style="padding:8px 12px;font-size:11px;font-family:var(--mono);color:var(--text2);text-align:center">${p.cbm || '—'}</td>
-              <td style="padding:8px 12px;font-size:12px;color:var(--text2);text-align:center">${p.supplier || '—'}</td>
-              <td style="padding:8px 12px;text-align:center"><span class="badge badge-${cnt > 0 ? 'blue' : 'gray'}">${cnt}건</span></td>
-            </tr>`;
+  const fmtN = v => (v == null || v === '' || isNaN(v)) ? '—' : Math.round(+v).toLocaleString();
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input class="search-input" style="width:230px;padding:6px 12px;border:1px solid var(--border);border-radius:7px" placeholder="제품명·옵션·코드·바코드 검색"
+        value="${_pvSearch}" oninput="_pvSearch=this.value;renderProductView();this.focus?.()">
+      <span class="todo-chip ${!_pvBrand ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvBrand='';renderProductView()">전체 ${products.length}</span>
+      ${brands.map(b => `<span class="todo-chip ${_pvBrand === b ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvBrand='${b}';renderProductView()">${b} ${products.filter(p=>p.brand===b).length}</span>`).join('')}
+      <span style="font-size:11px;color:var(--text3);margin-left:auto">더블클릭으로 수정 · Enter 저장 (여기가 제품 원본 DB예요)</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border)">
+      <thead><tr style="background:var(--surface2)">
+        <th style="padding:7px 6px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:40px">이미지</th>
+        ${PV_COLS.map(c => `<th style="padding:7px 8px;font-size:11px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:${c.w}px;text-align:${c.left ? 'left' : 'center'}">${c.label}</th>`).join('')}
+        <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:56px">발주</th>
+        <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:40px"></th>
+      </tr></thead>
+      <tbody>
+      ${list.map(p => {
+        const cnt = orders.filter(o => o.pid === p.id).length;
+        const total = (p.costKrw != null && p.parcelFee != null) ? +p.costKrw + +p.parcelFee : null;
+        return `<tr style="border-bottom:1px solid var(--border);height:34px">
+          <td style="text-align:center;border-right:1px solid var(--border);cursor:pointer" onclick="openEditProductModal('${p.id}')" title="제품 상세/이미지">${p.imageUrl ? `<img src="${p.imageUrl}" style="width:24px;height:24px;object-fit:cover;border-radius:4px">` : '<span style="color:var(--border2)">＋</span>'}</td>
+          ${PV_COLS.map(c => {
+            const v = c.calc ? total : p[c.f];
+            const disp = c.num ? fmtN(v) : (v || '—');
+            return `<td data-pvid="${p.id}" data-pvf="${c.f}" style="padding:4px 8px;font-size:${c.mono ? '10.5px' : '12px'};${c.mono ? 'font-family:var(--mono);color:var(--text2);' : ''}border-right:1px solid var(--border);text-align:${c.left ? 'left' : 'center'};${c.calc ? 'background:var(--yellow-bg,#fdf9d8);font-weight:600;' : 'cursor:cell;'}white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${c.w}px" ${c.calc ? '' : `ondblclick="pvEditCell(this)"`}>${disp}</td>`;
           }).join('')}
-        </tbody>
-      </table>
-    </div>`;
+          <td style="text-align:center"><span class="badge badge-${cnt ? 'blue' : 'gray'}">${cnt}</span></td>
+          <td style="text-align:center"><button class="btn btn-ghost btn-sm" onclick="openEditProductModal('${p.id}')">✎</button></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:var(--text3)">${list.length}개 표시 / 전체 ${products.length}개 · 원가+택배는 자동 계산 · 링크·이미지는 ✎에서</div>`;
+}
+
+// 제품 DB 셀 인라인 편집 (제품 원본이므로 자유 수정 허용)
+function pvEditCell(td) {
+  const p = products.find(x => x.id === td.dataset.pvid);
+  const col = PV_COLS.find(c => c.f === td.dataset.pvf);
+  if (!p || !col || col.calc) return;
+  const cur = p[col.f] ?? '';
+  td.innerHTML = `<input type="text" value="${cur}" style="width:100%;border:2px solid #2563eb;border-radius:4px;padding:3px 5px;font-size:11.5px;box-sizing:border-box" spellcheck="false">`;
+  const inp = td.querySelector('input');
+  inp.focus(); inp.select();
+  let closed = false;
+  const commit = async () => {
+    if (closed) return; closed = true;
+    let v = inp.value.trim();
+    if (col.num) { v = v === '' ? null : parseFloat(v.replace(/,/g, '')); if (v != null && isNaN(v)) { renderProductView(); return; } }
+    if ((col.f === 'name' || col.f === 'option') && !v) { renderProductView(); return; }
+    if (p[col.f] === v) { renderProductView(); return; }
+    p[col.f] = v;
+    renderProductView();
+    renderBoard();
+    showToast('제품 정보 수정됨');
+    try { await syncProduct(p); } catch (e) { showToast('저장 실패: ' + e.message); }
+    saveCache();
+  };
+  inp.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') commit();
+    else if (ev.key === 'Escape') { closed = true; renderProductView(); }
   });
-  el.innerHTML = html;
+  inp.addEventListener('blur', commit);
 }
 
 // ─── 발주 모달 ────────────────────────────────────────────────
@@ -3789,6 +3913,9 @@ function uploadProductExcel(input) {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
       if (rows.length === 0) { showToast('데이터가 없습니다'); return; }
+
+      // 상품DB 원본(상품db2.xlsx) 형식 자동 감지 — '자체상품코드' 헤더 존재
+      if (rows[0] && '자체상품코드' in rows[0]) { importProductDb2(rows); return; }
 
       excelPendingProducts = rows.map(row => {
         const p = {};
