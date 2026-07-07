@@ -3546,10 +3546,14 @@ function startResize(e, handle) {
   e.preventDefault();
   _rsCol = handle.parentElement;
   _rsStartX = _rsLastX = e.clientX;
-  _rsStartW = _rsCol.offsetWidth;
-  // 테이블을 현재 픽셀 폭으로 고정 — 한 열만 바꿔도 전체 열이 재분배되는 것 방지
   _rsTable = document.getElementById('board-table');
-  _rsTableW = _rsTable.offsetWidth;
+  // 모든 열을 현재 렌더링 폭으로 동결 — 남는 공간 재분배가 사라져
+  // 잡은 열만 마우스를 그대로 따라온다 (읽기 전부 → 쓰기 전부 순서로 리플로우 1회)
+  const ths = [..._rsTable.querySelectorAll('thead th')];
+  const widths = ths.map(t => t.getBoundingClientRect().width);
+  ths.forEach((t, i) => t.style.width = widths[i] + 'px');
+  _rsStartW = widths[ths.indexOf(_rsCol)];
+  _rsTableW = widths.reduce((a, b) => a + b, 0);
   _rsTable.style.width = _rsTableW + 'px';
   _rsTable.style.minWidth = '0';
   handle.classList.add('resizing');
