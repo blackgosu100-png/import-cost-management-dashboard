@@ -263,6 +263,30 @@ th.col-filtered { color: var(--accent); }
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
 }
+/* ─── 오늘 할 일 바 ──────────────────────────────── */
+.todo-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 20px 2px; }
+.todo-bar:empty { display:none; }
+.todo-label { font-size:12px; font-weight:600; color:var(--text2); }
+.todo-chip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:4px 11px; border-radius:20px; cursor:pointer; border:1px solid transparent; user-select:none; }
+.todo-chip:hover { filter:brightness(.95); }
+.todo-chip.on { border-color:currentColor; }
+.todo-amber { background:#fdf3e3; color:#b45309; }
+.todo-red { background:#fdeaea; color:#d43c3c; }
+.todo-sky { background:#e8f4fb; color:#0369a1; }
+.todo-violet { background:#f3effd; color:#7c3aed; }
+.todo-none { background:var(--surface2); color:var(--text3); font-weight:500; cursor:default; }
+
+/* ─── 인라인 셀 편집 + 범위 선택 ─────────────────── */
+td.cell-edit { cursor:cell; user-select:none; }
+td.cell-edit.cell-sel { box-shadow:inset 0 0 0 2px #2563eb; border-radius:2px; }
+td.cell-edit.cell-sel-range { background:rgba(37,99,235,.12) !important; box-shadow:inset 0 0 0 1px rgba(37,99,235,.35); }
+td.cell-edit.cell-sel.cell-sel-range { box-shadow:inset 0 0 0 2px #2563eb; }
+.range-hint { position:fixed; z-index:290; background:#1a1a18; color:#fff; font-size:11px; padding:5px 12px; border-radius:6px; pointer-events:none; opacity:.92; }
+td.cell-edit.cell-editing { padding:2px !important; }
+td.cell-edit.cell-editing input { width:100%; border:2px solid #2563eb; border-radius:4px; padding:4px 6px; font-size:12px; font-family:var(--mono); background:#fff; box-sizing:border-box; }
+td.cell-edit.cell-editing input:focus { outline:none; }
+td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fdeaea; }
+.cell-parse-hint { position:fixed; z-index:300; background:#1a1a18; color:#fff; font-size:11px; padding:4px 10px; border-radius:6px; pointer-events:none; font-family:var(--mono); }
 </style>
 </head>
 <body>
@@ -345,7 +369,7 @@ th.col-filtered { color: var(--accent); }
     <div class="toolbar">
       <div class="search-wrap">
         <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4"/><line x1="9.5" y1="9.5" x2="13" y2="13"/></svg>
-        <input class="search-input" placeholder="상품명 검색..." id="search-input" oninput="renderBoard()">
+        <input class="search-input" placeholder="상품명·옵션·코드 검색..." id="search-input" oninput="renderBoard()">
       </div>
       <div id="active-filters" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
       <div class="toolbar-spacer"></div>
@@ -357,18 +381,18 @@ th.col-filtered { color: var(--accent); }
       <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="display:none" onchange="importOrderExcel(this)">
     </div>
 
+    <!-- 오늘 할 일 바 -->
+    <div class="todo-bar" id="todo-bar"></div>
+
     <!-- Bulk edit bar -->
     <div class="bulk-bar" id="bulk-bar">
       <span class="bulk-bar-count" id="bulk-count"></span>
+      <span style="font-size:11px;opacity:.55">날짜 수정은 셀을 드래그로 선택해서 바로 입력하세요</span>
       <div class="bulk-bar-sep"></div>
-      <label>발주일</label><input type="date" id="b-orderDate">
-      <label>공장출고</label><input type="date" id="b-factoryDate">
-      <label>위해입고</label><input type="date" id="b-whDate">
-      <label>선적일</label><input type="date" id="b-shipDate">
-      <label>국내입고</label><input type="date" id="b-arriveDate">
-      <div class="bulk-bar-sep"></div>
-      <button class="btn btn-sm" onclick="applyBulkEdit()" style="background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4);color:#fff">적용</button>
       <button class="btn btn-sm" onclick="clearSelection()" style="background:transparent;border-color:rgba(255,255,255,.3);color:rgba(255,255,255,.8)">선택 해제</button>
+      <div class="bulk-bar-sep"></div>
+      <button class="btn btn-sm" onclick="groupSelected()" style="background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4);color:#fff" title="선택한 발주를 같은 물류 그룹으로 묶기">🔗 그룹 묶기</button>
+      <button class="btn btn-sm" onclick="ungroupSelected()" style="background:transparent;border-color:rgba(255,255,255,.3);color:rgba(255,255,255,.8)" title="선택한 발주를 그룹에서 제외">⛓ 그룹 풀기</button>
       <div class="bulk-bar-sep"></div>
       <button class="btn btn-sm" onclick="bulkDelete()" style="background:rgba(185,28,28,.5);border-color:rgba(252,165,165,.4);color:#fff">선택 삭제</button>
     </div>
@@ -378,7 +402,9 @@ th.col-filtered { color: var(--accent); }
       <table class="board-table" id="board-table">
         <thead>
           <tr>
-            <th style="width:240px;user-select:none;position:relative" onclick="openColFilter(event,'name')">상품명 / 옵션 / 차수 <span class="col-filter-icon" id="fi-name">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
+            <th style="width:180px;user-select:none;position:relative" onclick="openColFilter(event,'name')">상품명 <span class="col-filter-icon" id="fi-name">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
+            <th style="width:140px;user-select:none;position:relative" onclick="openColFilter(event,'option')">옵션명 <span class="col-filter-icon" id="fi-option">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
+            <th style="width:60px;user-select:none;position:relative" onclick="openColFilter(event,'orderSeq')">차수 <span class="col-filter-icon" id="fi-orderSeq">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
             <th style="width:65px;user-select:none;position:relative" onclick="openColFilter(event,'qty')">수량 <span class="col-filter-icon" id="fi-qty">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
             <th style="width:80px;user-select:none;position:relative" onclick="openColFilter(event,'orderDate')">발주일 <span class="col-filter-icon" id="fi-orderDate">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
             <th style="width:80px;user-select:none;position:relative" onclick="openColFilter(event,'factoryDate')">공장출고 <span class="col-filter-icon" id="fi-factoryDate">▾</span><span class="col-resizer" onmousedown="startResize(event,this)"></span></th>
@@ -411,14 +437,14 @@ th.col-filtered { color: var(--accent); }
   </div>
 
   <!-- Cost View -->
-  <div id="view-cost" style="display:none;flex:1;overflow:auto;padding:24px">
-    <div style="max-width:800px;margin:0 auto">
-      <div style="margin-bottom:16px">
-        <div style="font-size:14px;font-weight:600;color:var(--text)">선적 묶음별 원가 현황</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">선적일 기준 자동 그룹핑 · 같은 날 다른 배는 발주 상세에서 호선 구분 입력</div>
-      </div>
-      <div id="cost-view-content"></div>
+  <div id="view-cost" style="display:none;flex:1;overflow:hidden;flex-direction:column">
+    <!-- 상단 탭 바 -->
+    <div style="display:flex;justify-content:center;align-items:center;border-bottom:1px solid var(--border);background:var(--surface);padding:10px 16px;gap:6px;flex-shrink:0">
+      <button id="cost-tab-feed" onclick="switchCostViewMode('feed')" style="padding:6px 16px;font-size:12px;font-weight:500;border:1px solid var(--border);border-radius:6px;background:var(--text);color:#fafafa;cursor:pointer">피드 보기</button>
+      <button id="cost-tab-list" onclick="switchCostViewMode('list')" style="padding:6px 16px;font-size:12px;font-weight:500;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text2);cursor:pointer">목록 보기</button>
     </div>
+    <!-- 본문 -->
+    <div id="cost-view-body" style="flex:1;overflow:hidden;display:flex"></div>
   </div>
 
   <!-- Product View -->
@@ -802,6 +828,26 @@ th.col-filtered { color: var(--accent); }
   </div>
 </div>
 
+<!-- Modal: 붙여넣기 미리보기 -->
+<div class="modal-backdrop" id="paste-modal">
+  <div class="modal" style="width:560px;max-width:92vw">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">붙여넣기 미리보기</div>
+        <div class="modal-sub" id="paste-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('paste-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="overflow:auto;max-height:50vh" id="paste-preview-wrap"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('paste-modal')">취소</button>
+      <button class="btn btn-primary" id="paste-confirm-btn" onclick="confirmPaste()">적용</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -831,6 +877,20 @@ function loadCache() {
   } catch(e) { return false; }
 }
 function clearCache() { try { localStorage.removeItem(CACHE_KEY); } catch(e) {} }
+
+// 물류 그룹 ID를 별도 로컬 맵에 보존 (Supabase 컬럼 미사용 — 재로드 시에도 유지)
+const GROUPS_KEY = 'icd_order_groups_v1';
+function saveGroupsLocal() {
+  const map = {};
+  orders.forEach(o => { if (o.groupId) map[o.id] = o.groupId; });
+  try { localStorage.setItem(GROUPS_KEY, JSON.stringify(map)); } catch(e) {}
+}
+function applyGroupsFromLocal() {
+  try {
+    const map = JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}');
+    orders.forEach(o => { if (map[o.id]) o.groupId = map[o.id]; });
+  } catch(e) {}
+}
 
 function setLoginLoading(on) {
   const btn = document.getElementById('login-btn');
@@ -923,6 +983,7 @@ async function loadData() {
     costPerUnit: o.cost_per_unit, extraCosts: o.extra_costs || [], status: o.status || 'active',
     orderSeq: o.order_seq || '',
   }));
+  applyGroupsFromLocal();
   shipGroups = {};
   (sgData || []).forEach(sg => {
     shipGroups[sg.key] = {
@@ -939,7 +1000,7 @@ async function loadData() {
 async function syncOrder(o) {
   await sb.from('orders').upsert({
     id: o.id, pid: o.pid, ship_tag: o.shipTag, qty: o.qty, rate: o.rate, price: o.price,
-    order_date: o.orderDate, factory_date: o.factoryDate || null, factory_memo: o.factoryMemo || null,
+    order_date: o.orderDate || null, factory_date: o.factoryDate || null, factory_memo: o.factoryMemo || null,
     wh_date: o.whDate || null, ship_date: o.shipDate || null, arrive_date: o.arriveDate || null,
     cost_per_unit: o.costPerUnit, extra_costs: o.extraCosts, status: o.status,
     order_seq: o.orderSeq || '',
@@ -1070,7 +1131,9 @@ function getColValues(col) {
   orders.forEach(o => {
     const p = getProduct(o.pid);
     let v;
-    if (col === 'name') v = p.name + ' ' + p.option;
+    if (col === 'name') v = p.name || '';
+    else if (col === 'option') v = p.option || '';
+    else if (col === 'orderSeq') v = o.orderSeq || '';
     else if (col === 'status') v = statusLabel(o);
     else v = o[col] || '';
     vals.add(v || '(비어있음)');
@@ -1260,19 +1323,26 @@ function removeSingleFilter(col) {
 // ─── 보드 렌더 (엑셀 방식: 그룹 헤더 없이 행 나열) ──────────
 function renderBoard() {
   updateSortIcon();
+  renderTodoBar();
   const search = (document.getElementById('search-input').value || '').toLowerCase();
+  const todoIds = boardTodoFilter
+    ? new Set((computeTodos().find(t => t.key === boardTodoFilter) || {ids:[]}).ids)
+    : null;
 
   let filtered = orders.filter(o => {
     const p = getProduct(o.pid);
-    // 텍스트 검색
+    if (todoIds && !todoIds.has(o.id)) return false;
+    // 텍스트 검색 (상품명·옵션명·상품코드·옵션코드)
     if (search) {
-      const name = (p.name + ' ' + p.option).toLowerCase();
-      if (!name.includes(search)) return false;
+      const hay = (p.name + ' ' + p.option + ' ' + (p.pcode||'') + ' ' + (p.ocode||'')).toLowerCase();
+      if (!hay.includes(search)) return false;
     }
     // 컬럼 필터
     for (const [col, vals] of Object.entries(colFilters)) {
       let v;
-      if (col === 'name') v = p.name + ' ' + p.option;
+      if (col === 'name') v = p.name || '';
+      else if (col === 'option') v = p.option || '';
+      else if (col === 'orderSeq') v = o.orderSeq || '';
       else if (col === 'status') v = statusLabel(o);
       else v = o[col] || '';
       if (!vals.has(v || '(비어있음)')) return false;
@@ -1280,17 +1350,35 @@ function renderBoard() {
     return true;
   });
 
-  // 정렬
+  // 정렬 (그룹 보존: 같은 그룹은 그룹 대표 키로 함께 이동)
   if (sortState.col) {
     const col = sortState.col;
     const dir = sortState.dir;
-    filtered.sort((a, b) => {
-      const va = col === 'status' ? getStatusText(a) : (a[col] ?? '');
-      const vb = col === 'status' ? getStatusText(b) : (b[col] ?? '');
+    const getVal = (o) => {
+      if (col === 'status') return getStatusText(o);
+      if (col === 'name') return getProduct(o.pid).name || '';
+      if (col === 'option') return getProduct(o.pid).option || '';
+      return o[col] ?? '';
+    };
+    // 그룹 대표 키 계산 (그룹의 첫 멤버 기준)
+    const groupSortKey = {};
+    filtered.forEach(o => {
+      if (o.groupId && !(o.groupId in groupSortKey)) groupSortKey[o.groupId] = getVal(o);
+    });
+    const cmp = (va, vb) => {
       const na = va !== '' ? Number(va) : NaN;
       const nb = vb !== '' ? Number(vb) : NaN;
       if (!isNaN(na) && !isNaN(nb)) return (na - nb) * dir;
-      return String(va).localeCompare(String(vb)) * dir;
+      return String(va).localeCompare(String(vb), 'ko', { numeric: true }) * dir;
+    };
+    filtered.sort((a, b) => {
+      const ka = a.groupId ? groupSortKey[a.groupId] : getVal(a);
+      const kb = b.groupId ? groupSortKey[b.groupId] : getVal(b);
+      const c = cmp(ka, kb);
+      if (c !== 0) return c;
+      // 같은 그룹 내에서는 원래 값 기준 보조 정렬
+      if (a.groupId && a.groupId === b.groupId) return cmp(getVal(a), getVal(b));
+      return 0;
     });
   }
 
@@ -1313,12 +1401,16 @@ function renderBoard() {
   body.innerHTML = '';
 
   if (filtered.length === 0) {
-    body.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">조건에 맞는 발주 건이 없습니다</div></div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="12"><div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">조건에 맞는 발주 건이 없습니다</div></div></td></tr>`;
+    refreshCellGrid();
     return;
   }
 
+  // 물류 그룹 병합 정보 (연속된 같은 groupId만 rowspan 적용)
+  const groupRuns = computeGroupRuns(filtered);
+
   // 행 나열 (그룹 헤더 없음 — 엑셀 방식)
-  filtered.forEach(o => {
+  filtered.forEach((o, _fi) => {
     const p = getProduct(o.pid);
     const hasExtra = o.extraCosts?.length > 0;
     const status = getStatus(o);
@@ -1372,22 +1464,41 @@ function renderBoard() {
       ? `<div class="cell-cost done">${fmt(o.costPerUnit)}</div>`
       : (o.arriveDate ? `<div class="cell-cost partial">미입력</div>` : `<div class="cell-cost empty">—</div>`);
 
+    const run = groupRuns[o.id];
+    const stripe = run ? `box-shadow: inset 3px 0 0 0 ${run.color};` : '';
+    if (run && run.isEnd) tr.style.borderBottom = '2px solid #94a3b8';
+    // 그룹(rowspan) 셀 편집 시 멤버 전체에 적용하기 위한 id 목록
+    const runOids = run && run.isStart
+      ? filtered.slice(_fi, _fi + run.size).map(x => x.id).join(',')
+      : o.id;
+    const editAttr = f => ` data-f="${f}" data-oid="${o.id}" data-oids="${runOids}"`;
+    // 5개 날짜 셀: 그룹 시작행만 rowspan, 그 외는 셀 자체를 생략
+    const dateCells = (!run || run.isStart) ? `
+      <td class="cell-date cell-edit ${o.orderDate ? 'done' : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('orderDate')}>${fmtDate(o.orderDate) || '—'}</td>
+      <td class="cell-date cell-edit ${o.factoryDate ? 'done' : (o.factoryMemo ? 'memo' : 'empty')}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('factoryDate')} title="${o.factoryMemo||''}">${o.factoryDate ? fmtDate(o.factoryDate) : (o.factoryMemo || '—')}</td>
+      <td class="cell-date cell-edit ${o.whDate ? 'done' : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('whDate')}>${fmtDate(o.whDate) || '—'}</td>
+      <td class="cell-date cell-edit ${o.shipDate ? 'done' : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('shipDate')}>${fmtDate(o.shipDate) || '—'}</td>
+      <td class="cell-date cell-edit ${o.arriveDate ? (hasExtra ? 'delayed' : 'done') : 'empty'}"${run ? ` rowspan="${run.size}"` : ''}${editAttr('arriveDate')}>${fmtDate(o.arriveDate) || '—'}</td>
+    ` : '';
     tr.innerHTML = `
-      <td class="cell-product">
+      <td class="cell-product" style="${stripe}">
         <div style="display:flex;align-items:center;gap:8px">
           ${p.imageUrl ? `<img src="${p.imageUrl}" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">` : ''}
-          <div>
+          <div style="min-width:0;flex:1">
             <div class="cell-product-name">${p.name || '—'}</div>
-            <div class="cell-product-sub">${p.option || ''}${o.orderSeq ? ' · ' + o.orderSeq : ''}</div>
+            ${p.pcode ? `<div style="font-size:10px;font-family:var(--mono);color:var(--text3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.pcode}</div>` : ''}
           </div>
         </div>
       </td>
-      <td class="cell-num">${fmtNum(o.qty)}</td>
-      <td class="cell-date ${o.orderDate ? 'done' : 'empty'}">${fmtDate(o.orderDate) || '—'}</td>
-      <td class="cell-date ${o.factoryDate ? 'done' : (o.factoryMemo ? 'memo' : 'empty')}" title="${o.factoryMemo||''}">${o.factoryDate ? fmtDate(o.factoryDate) : (o.factoryMemo || '—')}</td>
-      <td class="cell-date ${o.whDate ? 'done' : 'empty'}">${fmtDate(o.whDate) || '—'}</td>
-      <td class="cell-date ${o.shipDate ? 'done' : 'empty'}">${fmtDate(o.shipDate) || '—'}</td>
-      <td class="cell-date ${o.arriveDate ? (hasExtra ? 'delayed' : 'done') : 'empty'}">${fmtDate(o.arriveDate) || '—'}</td>
+      <td>
+        <div style="min-width:0">
+          <div class="cell-product-sub" style="color:var(--text2);font-size:12px">${p.option || '—'}</div>
+          ${p.ocode ? `<div style="font-size:10px;font-family:var(--mono);color:var(--text3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.ocode}</div>` : ''}
+        </div>
+      </td>
+      <td class="cell-num">${o.orderSeq || '—'}</td>
+      <td class="cell-num cell-edit" data-f="qty" data-oid="${o.id}" data-oids="${o.id}">${fmtNum(o.qty)}</td>
+      ${dateCells}
       <td>${statusBadge(o)}</td>
       <td>${costCell}</td>
       <td style="text-align:center">
@@ -1395,6 +1506,525 @@ function renderBoard() {
       </td>`;
     body.appendChild(tr);
   });
+  refreshCellGrid();
+}
+
+// ─── 오늘 할 일 바 ───────────────────────────────────────────
+let boardTodoFilter = null;
+
+function computeTodos() {
+  const td = today();
+  const week = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const t = [];
+  const fdCheck = orders.filter(o => !o.arriveDate && !o.whDate && !o.shipDate && o.factoryDate && o.factoryDate <= td);
+  if (fdCheck.length) t.push({ key: 'fdCheck', label: `공장출고 확인 ${fdCheck.length}건`, cls: 'todo-amber', ids: fdCheck.map(o => o.id) });
+  const shipSoon = orders.filter(o => !o.arriveDate && o.shipDate && o.shipDate > td && o.shipDate <= week);
+  if (shipSoon.length) t.push({ key: 'shipSoon', label: `선적예정 7일 내 ${shipSoon.length}건`, cls: 'todo-sky', ids: shipSoon.map(o => o.id) });
+  const arriveCheck = orders.filter(o => !o.arriveDate && o.shipDate && o.shipDate <= td);
+  if (arriveCheck.length) t.push({ key: 'arriveCheck', label: `국내입고 확인 ${arriveCheck.length}건`, cls: 'todo-red', ids: arriveCheck.map(o => o.id) });
+  const noCpu = orders.filter(o => o.arriveDate && !o.costPerUnit);
+  if (noCpu.length) t.push({ key: 'noCpu', label: `도착원가 미입력 ${noCpu.length}건`, cls: 'todo-violet', ids: noCpu.map(o => o.id) });
+  return t;
+}
+
+function renderTodoBar() {
+  const el = document.getElementById('todo-bar');
+  if (!el) return;
+  const t = computeTodos();
+  if (!orders.length) { el.innerHTML = ''; return; }
+  if (!t.length) {
+    el.innerHTML = `<span class="todo-label">오늘 할 일</span><span class="todo-chip todo-none">모두 처리됐어요</span>`;
+    return;
+  }
+  el.innerHTML = `<span class="todo-label">오늘 할 일</span>` + t.map(x =>
+    `<span class="todo-chip ${x.cls} ${boardTodoFilter === x.key ? 'on' : ''}" onclick="toggleTodoFilter('${x.key}')">${x.label}${boardTodoFilter === x.key ? ' ✕' : ''}</span>`
+  ).join('');
+}
+
+function toggleTodoFilter(key) {
+  boardTodoFilter = boardTodoFilter === key ? null : key;
+  renderBoard();
+}
+
+// ─── 엑셀식 날짜 입력 파서 ───────────────────────────────────
+// "6/10" "6-10" "6.10" "0610" "610" "06월 10일" "2026-06-10" "20260610" 인식
+function parseFlexDate(s) {
+  s = String(s).trim();
+  if (!s || s === '-' || s === '—') return '';
+  const iso = (y, mo, d) => {
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  };
+  let m = s.match(/^(\d{4})[\/\-\.년]\s?(\d{1,2})[\/\-\.월]\s?(\d{1,2})일?$/);
+  if (m) return iso(+m[1], +m[2], +m[3]);
+  m = s.match(/^(\d{8})$/);
+  if (m) return iso(+s.slice(0,4), +s.slice(4,6), +s.slice(6,8));
+  m = s.match(/^(\d{1,2})[\/\-\.월]\s?(\d{1,2})일?$/);
+  if (m) return guessYearDate(+m[1], +m[2]);
+  m = s.match(/^(\d{3,4})$/);
+  if (m) {
+    const [mo, d] = s.length === 3 ? [+s[0], +s.slice(1)] : [+s.slice(0,2), +s.slice(2)];
+    return guessYearDate(mo, d);
+  }
+  return null;
+}
+
+// 연도 자동 추정: 오늘과 가장 가까운 연도 선택 (작년/올해/내년 중)
+function guessYearDate(mo, d) {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const now = new Date();
+  let best = null, bestDiff = Infinity;
+  for (const y of [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1]) {
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getMonth() !== mo - 1 || dt.getDate() !== d) continue;
+    const diff = Math.abs(dt - now);
+    if (diff < bestDiff) { bestDiff = diff; best = `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+  }
+  return best;
+}
+
+// ─── 인라인 셀 편집 + 엑셀식 범위 선택 복사/붙여넣기 ─────────
+const EDIT_COLS = ['qty', 'orderDate', 'factoryDate', 'whDate', 'shipDate', 'arriveDate'];
+const FIELD_LABEL = { qty: '수량', orderDate: '발주일', factoryDate: '공장출고', whDate: '위해입고', shipDate: '선적일', arriveDate: '국내입고' };
+let gridRows = [];   // renderBoard 후 재구축: [{oid, tds:{field: td|null}}]
+let gridIdx = {};    // oid → 행 인덱스
+let selRange = null; // { a:{oid,f}, f:{oid,f} } — 앵커/포커스 (엑셀의 선택 시작/끝)
+let editingCell = false;
+let _dragSel = false;
+
+function rebuildGrid() {
+  gridRows = [...document.querySelectorAll('#board-body tr[data-oid]')].map(tr => ({ oid: tr.dataset.oid, tds: {} }));
+  gridIdx = {};
+  gridRows.forEach((g, i) => gridIdx[g.oid] = i);
+  document.querySelectorAll('#board-body td.cell-edit').forEach(td => {
+    const i = gridIdx[td.dataset.oid];
+    if (i != null) gridRows[i].tds[td.dataset.f] = td;
+  });
+}
+
+function rangeRect() {
+  if (!selRange) return null;
+  const r1 = gridIdx[selRange.a.oid], r2 = gridIdx[selRange.f.oid];
+  const c1 = EDIT_COLS.indexOf(selRange.a.f), c2 = EDIT_COLS.indexOf(selRange.f.f);
+  if (r1 == null || r2 == null || c1 < 0 || c2 < 0) return null;
+  return { rMin: Math.min(r1, r2), rMax: Math.max(r1, r2), cMin: Math.min(c1, c2), cMax: Math.max(c1, c2) };
+}
+
+// 범위 안의 실제 존재하는 셀 순회 (그룹 병합으로 빠진 셀은 건너뜀)
+function forEachRangeCell(cb) {
+  const rc = rangeRect();
+  if (!rc) return;
+  for (let r = rc.rMin; r <= rc.rMax; r++)
+    for (let c = rc.cMin; c <= rc.cMax; c++) {
+      const f = EDIT_COLS[c];
+      const td = gridRows[r].tds[f];
+      if (td) cb(td, gridRows[r].oid, f, r, c);
+    }
+}
+
+function rangeCellCount() { let n = 0; forEachRangeCell(() => n++); return n; }
+
+function paintSel() {
+  document.querySelectorAll('#board-body td.cell-sel, #board-body td.cell-sel-range')
+    .forEach(td => td.classList.remove('cell-sel', 'cell-sel-range'));
+  removeRangeHint();
+  if (!selRange) return;
+  if (!rangeRect()) { selRange = null; return; }
+  let anchorTd = null, count = 0, lastTd = null;
+  forEachRangeCell((td, oid, f) => {
+    td.classList.add('cell-sel-range');
+    count++; lastTd = td;
+    if (oid === selRange.a.oid && f === selRange.a.f) anchorTd = td;
+  });
+  if (anchorTd) anchorTd.classList.add('cell-sel');
+  if (count > 1 && lastTd) showRangeHint(lastTd, count);
+}
+
+let _rangeHintEl = null;
+function showRangeHint(td, count) {
+  removeRangeHint();
+  _rangeHintEl = document.createElement('div');
+  _rangeHintEl.className = 'range-hint';
+  _rangeHintEl.textContent = `${count}개 셀 — Ctrl+C 복사 · Ctrl+V 붙여넣기 · 값 입력 후 Ctrl+Enter 모두 채우기 · Delete 비우기`;
+  document.body.appendChild(_rangeHintEl);
+  const r = td.getBoundingClientRect();
+  _rangeHintEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 480)) + 'px';
+  _rangeHintEl.style.top = (r.bottom + 6) + 'px';
+}
+function removeRangeHint() { if (_rangeHintEl) { _rangeHintEl.remove(); _rangeHintEl = null; } }
+
+function anchorCellTd() {
+  if (!selRange) return null;
+  const r = gridIdx[selRange.a.oid];
+  return r == null ? null : gridRows[r].tds[selRange.a.f];
+}
+
+// renderBoard 직후 호출 — 그리드 좌표 재구축 + 선택 복원
+function refreshCellGrid() {
+  rebuildGrid();
+  paintSel();
+}
+
+function cellRawValue(oid, f) {
+  const o = getOrder(oid);
+  if (!o) return '';
+  return f === 'qty' ? (o.qty ?? '') : (o[f] || '');
+}
+
+// ─── 마우스: 드래그로 범위 선택 (엑셀 방식) ──────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const body = document.getElementById('board-body');
+  if (!body) return;
+  // 셀 클릭이 행 클릭(상세 모달)으로 번지지 않게 캡처 단계에서 차단
+  body.addEventListener('click', e => {
+    const td = e.target.closest('td.cell-edit');
+    if (!td) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey || selectedOrders.size > 0) return;
+    e.stopPropagation();
+  }, true);
+  body.addEventListener('mousedown', e => {
+    const td = e.target.closest('td.cell-edit');
+    if (!td || e.button !== 0) return;
+    if (e.ctrlKey || e.metaKey || selectedOrders.size > 0) return; // 행 선택 모드 유지
+    if (td.classList.contains('cell-editing')) return;
+    e.preventDefault();
+    const key = { oid: td.dataset.oid, f: td.dataset.f };
+    if (e.shiftKey && selRange) selRange.f = key;
+    else { selRange = { a: key, f: key }; _dragSel = true; }
+    paintSel();
+  }, true);
+  body.addEventListener('mouseover', e => {
+    if (!_dragSel || !selRange) return;
+    const td = e.target.closest('td.cell-edit');
+    if (!td) return;
+    selRange.f = { oid: td.dataset.oid, f: td.dataset.f };
+    paintSel();
+  });
+  body.addEventListener('dblclick', e => {
+    const td = e.target.closest('td.cell-edit');
+    if (!td || td.classList.contains('cell-editing')) return;
+    if (selectedOrders.size > 0) return;
+    e.stopPropagation();
+    const key = { oid: td.dataset.oid, f: td.dataset.f };
+    selRange = { a: key, f: key };
+    paintSel();
+    openCellEditor(td);
+  }, true);
+});
+document.addEventListener('mouseup', () => { _dragSel = false; });
+
+// ─── 셀 편집기 ───────────────────────────────────────────────
+function openCellEditor(td, initial) {
+  const oid = td.dataset.oid, f = td.dataset.f;
+  editingCell = true;
+  td.classList.add('cell-editing');
+  const cur = initial !== undefined ? initial : cellRawValue(oid, f);
+  td.dataset.prevHtml = td.innerHTML;
+  td.innerHTML = `<input type="text" value="${cur}" spellcheck="false">`;
+  const inp = td.querySelector('input');
+  inp.focus();
+  if (initial !== undefined) inp.setSelectionRange(inp.value.length, inp.value.length);
+  else inp.select();
+
+  const isDate = f !== 'qty';
+  let hint = null;
+  const showHint = () => {
+    if (!isDate) return;
+    const v = inp.value.trim();
+    const parsed = v ? parseFlexDate(v) : '';
+    inp.classList.toggle('parse-err', v !== '' && parsed === null);
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.className = 'cell-parse-hint';
+      document.body.appendChild(hint);
+    }
+    const r = td.getBoundingClientRect();
+    hint.style.left = r.left + 'px';
+    hint.style.top = (r.bottom + 4) + 'px';
+    hint.textContent = v === '' ? '(비우기)' : (parsed === null ? '날짜 인식 실패' : '→ ' + parsed);
+  };
+  showHint();
+  inp.addEventListener('input', showHint);
+  const removeHint = () => { if (hint) { hint.remove(); hint = null; } };
+
+  let closed = false;
+  const cancel = () => {
+    if (closed) return; closed = true;
+    removeHint(); editingCell = false;
+    td.classList.remove('cell-editing');
+    td.innerHTML = td.dataset.prevHtml;
+    paintSel();
+  };
+  const commit = async (moveDir, fillAll) => {
+    if (closed) return;
+    const raw = inp.value.trim();
+    // Ctrl+Enter: 선택 범위 전체 채우기
+    if (fillAll && rangeCellCount() > 1) {
+      if (isDate && raw !== '' && parseFlexDate(raw) === null) { inp.classList.add('parse-err'); showHint(); return; }
+      closed = true; removeHint(); editingCell = false;
+      await fillRange(raw);
+      return;
+    }
+    let val;
+    if (f === 'qty') {
+      val = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+      if (raw !== '' && isNaN(val)) { inp.classList.add('parse-err'); return; }
+    } else {
+      val = parseFlexDate(raw);
+      if (val === null) { inp.classList.add('parse-err'); showHint(); return; }
+    }
+    closed = true;
+    removeHint(); editingCell = false;
+    const oids = (td.dataset.oids || oid).split(',');
+    await applyChanges([{ oids, f, val }], oids.length > 1 ? `그룹 ${oids.length}건 수정됨` : '수정됨');
+    if (moveDir) moveSelection(moveDir.dr, moveDir.dc, false);
+  };
+  inp.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); commit(null, true); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); commit({ dr: ev.shiftKey ? -1 : 1, dc: 0 }); }
+    else if (ev.key === 'Tab') { ev.preventDefault(); commit({ dr: 0, dc: ev.shiftKey ? -1 : 1 }); }
+    else if (ev.key === 'Escape') { cancel(); }
+  });
+  inp.addEventListener('blur', () => { if (!closed) commit(); });
+}
+
+// 파싱된 값을 범위 전체에 적용 (Ctrl+Enter)
+async function fillRange(raw) {
+  const changes = [];
+  forEachRangeCell((td, oid, f) => {
+    let val, ok = true;
+    if (f === 'qty') {
+      val = raw === '' ? null : parseFloat(String(raw).replace(/,/g, ''));
+      if (raw !== '' && isNaN(val)) ok = false;
+    } else {
+      val = parseFlexDate(raw);
+      if (val === null) ok = false;
+    }
+    if (ok) changes.push({ oids: (td.dataset.oids || oid).split(','), f, val });
+  });
+  await applyChanges(changes, `${changes.length}개 셀 채움`);
+}
+
+// 변경 목록 적용 + 배치 저장 (모든 셀 수정의 공통 경로)
+async function applyChanges(changes, msg) {
+  const touched = new Map();
+  let shipWarn = false;
+  for (const c of changes) {
+    for (const id of c.oids) {
+      const o = getOrder(id);
+      if (!o) continue;
+      const nv = c.f === 'qty' ? c.val : (c.val || '');
+      const old = c.f === 'qty' ? o.qty : o[c.f];
+      if (old === nv || (c.f === 'qty' && old == null && nv == null)) continue;
+      o[c.f] = nv;
+      if (c.f === 'shipDate' && nv && shipGroups[nv]?.saved) shipWarn = true;
+      touched.set(id, o);
+    }
+  }
+  renderBoard();
+  if (!touched.size) return;
+  showToast(msg || `${touched.size}건 수정됨`);
+  if (shipWarn) setTimeout(() => showToast('⚠ 원가 확정된 선적 그룹의 날짜입니다 — 원가 탭에서 확인하세요'), 2400);
+  await bulkSyncOrders([...touched.values()]);
+  saveCache();
+}
+
+async function bulkSyncOrders(list) {
+  for (let i = 0; i < list.length; i += 100) {
+    await sb.from('orders').upsert(list.slice(i, i + 100).map(o => ({
+      id: o.id, pid: o.pid, ship_tag: o.shipTag, qty: o.qty, rate: o.rate, price: o.price,
+      order_date: o.orderDate || null, factory_date: o.factoryDate || null, factory_memo: o.factoryMemo || null,
+      wh_date: o.whDate || null, ship_date: o.shipDate || null, arrive_date: o.arriveDate || null,
+      cost_per_unit: o.costPerUnit, extra_costs: o.extraCosts, status: o.status,
+      order_seq: o.orderSeq || '', updated_at: new Date().toISOString(),
+    })));
+  }
+}
+
+// 선택 범위 비우기 (Delete)
+function clearRange() {
+  const changes = [];
+  forEachRangeCell((td, oid, f) =>
+    changes.push({ oids: (td.dataset.oids || oid).split(','), f, val: f === 'qty' ? null : '' }));
+  if (!changes.length) return;
+  applyChanges(changes, `${changes.length}개 셀 비움`);
+}
+
+// ─── 키보드: 엑셀식 이동/확장/편집 ───────────────────────────
+function moveSelection(dr, dc, extend) {
+  if (!selRange) return;
+  const base = extend ? selRange.f : selRange.a;
+  let r = gridIdx[base.oid];
+  let c = EDIT_COLS.indexOf(base.f);
+  if (r == null || c < 0) return;
+  if (dc !== 0) {
+    let nc = c + dc;
+    while (nc >= 0 && nc < EDIT_COLS.length && !gridRows[r].tds[EDIT_COLS[nc]]) nc += dc;
+    if (nc < 0 || nc >= EDIT_COLS.length) return;
+    c = nc;
+  }
+  if (dr !== 0) {
+    let nr = r + dr;
+    while (nr >= 0 && nr < gridRows.length && !gridRows[nr].tds[EDIT_COLS[c]]) nr += dr;
+    if (nr < 0 || nr >= gridRows.length) return;
+    r = nr;
+  }
+  const key = { oid: gridRows[r].oid, f: EDIT_COLS[c] };
+  if (extend) selRange.f = key;
+  else selRange = { a: key, f: key };
+  paintSel();
+  gridRows[r].tds[EDIT_COLS[c]]?.scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('keydown', e => {
+  if (!selRange || editingCell) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  if (document.querySelector('.modal-backdrop.open')) return;
+  const td = anchorCellTd();
+  if (!td) return;
+  if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); openCellEditor(td); return; }
+  if (e.key === 'Escape') {
+    if (rangeCellCount() > 1) { selRange.f = { ...selRange.a }; paintSel(); }
+    else { selRange = null; paintSel(); }
+    return;
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); clearRange(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1, 0, e.shiftKey); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1, 0, e.shiftKey); return; }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); moveSelection(0, -1, e.shiftKey); return; }
+  if (e.key === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1, e.shiftKey); return; }
+  if (e.key === 'Tab') { e.preventDefault(); moveSelection(0, e.shiftKey ? -1 : 1, false); return; }
+  // 타이핑 시작 → 앵커 셀 즉시 편집 (엑셀 방식)
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    openCellEditor(td, e.key);
+  }
+});
+
+// ─── 복사: 선택 범위를 TSV로 (엑셀에 그대로 붙여넣기 가능) ───
+document.addEventListener('copy', e => {
+  if (!selRange || editingCell) return;
+  if (e.target.closest?.('input, textarea')) return;
+  const rc = rangeRect();
+  if (!rc) return;
+  e.preventDefault();
+  const lines = [];
+  for (let r = rc.rMin; r <= rc.rMax; r++) {
+    const vals = [];
+    for (let c = rc.cMin; c <= rc.cMax; c++) {
+      const f = EDIT_COLS[c];
+      vals.push(gridRows[r].tds[f] ? String(cellRawValue(gridRows[r].oid, f)) : '');
+    }
+    lines.push(vals.join('\t'));
+  }
+  e.clipboardData.setData('text/plain', lines.join('\n'));
+  const rows = rc.rMax - rc.rMin + 1, cols = rc.cMax - rc.cMin + 1;
+  showToast(rows * cols > 1 ? `${rows}행 × ${cols}열 복사됨` : '셀 복사됨');
+});
+
+// ─── 붙여넣기: 엑셀 범위(TSV) → 선택 위치에 채움 ─────────────
+let _pasteChanges = [];
+document.addEventListener('paste', e => {
+  if (!selRange || editingCell) return;
+  if (e.target.closest?.('input, textarea')) return;
+  if (document.querySelector('.modal-backdrop.open')) return;
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text) return;
+  e.preventDefault();
+  const grid = text.replace(/\r/g, '').split('\n')
+    .filter((r, i, a) => !(i === a.length - 1 && r === ''))
+    .map(r => r.split('\t'));
+  if (!grid.length) return;
+  buildPasteChanges(grid);
+});
+
+function parseForField(f, raw) {
+  if (f === 'qty') {
+    const v = raw === '' ? null : parseFloat(raw.replace(/,/g, ''));
+    return { val: v, ok: !(raw !== '' && isNaN(v)) };
+  }
+  const v = parseFlexDate(raw);
+  return { val: v, ok: v !== null };
+}
+
+function buildPasteChanges(grid) {
+  const rc = rangeRect();
+  if (!rc) return;
+  const changes = [];
+  let skipped = 0;
+  const single = grid.length === 1 && grid[0].length === 1;
+  if (single && rangeCellCount() > 1) {
+    // 값 하나를 선택 범위 전체에 채우기 (엑셀 동작)
+    const raw = String(grid[0][0]).trim();
+    forEachRangeCell((td, oid, f) => {
+      const { val, ok } = parseForField(f, raw);
+      const o = getOrder(oid), p = o ? getProduct(o.pid) : {};
+      changes.push({ oids: (td.dataset.oids || oid).split(','), f, raw, val, ok, label: `${p.name || ''} ${p.option || ''}` });
+    });
+  } else {
+    for (let gr = 0; gr < grid.length; gr++) {
+      const r = rc.rMin + gr;
+      if (r >= gridRows.length) { skipped += grid[gr].length; continue; }
+      for (let gc = 0; gc < grid[gr].length; gc++) {
+        const f = EDIT_COLS[rc.cMin + gc];
+        if (!f) { skipped++; continue; }
+        const td = gridRows[r].tds[f];
+        if (!td) { skipped++; continue; }
+        const raw = String(grid[gr][gc] ?? '').trim();
+        const { val, ok } = parseForField(f, raw);
+        const o = getOrder(td.dataset.oid), p = o ? getProduct(o.pid) : {};
+        changes.push({ oids: (td.dataset.oids || td.dataset.oid).split(','), f, raw, val, ok, label: `${p.name || ''} ${p.option || ''}` });
+      }
+    }
+  }
+  if (!changes.length) { showToast('붙여넣을 대상 셀이 없습니다'); return; }
+  if (changes.length === 1 && changes[0].ok) {
+    applyChanges([changes[0]], '수정됨');
+    return;
+  }
+  _pasteChanges = changes;
+  renderPastePreview(skipped);
+}
+
+function renderPastePreview(skipped) {
+  const valid = _pasteChanges.filter(c => c.ok).length;
+  const bad = _pasteChanges.length - valid;
+  document.getElementById('paste-modal-sub').textContent =
+    `${valid}개 셀 적용${bad ? ` · 인식 실패 ${bad}개 건너뜀` : ''}${skipped ? ` · 범위 밖 ${skipped}개 무시` : ''}`;
+  document.getElementById('paste-preview-wrap').innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <thead style="position:sticky;top:0;background:var(--surface2)">
+        <tr>
+          <th style="padding:7px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">상품</th>
+          <th style="padding:7px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">항목</th>
+          <th style="padding:7px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">붙여넣은 값</th>
+          <th style="padding:7px 12px;font-size:11px;text-align:left;border-bottom:1px solid var(--border)">적용될 값</th>
+        </tr>
+      </thead>
+      <tbody>${_pasteChanges.slice(0, 60).map(c => `
+        <tr style="${c.ok ? '' : 'opacity:.45'}">
+          <td style="padding:5px 12px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">${c.label}${c.oids.length > 1 ? ` <span style="color:var(--text3)">(그룹 ${c.oids.length}건)</span>` : ''}</td>
+          <td style="padding:5px 12px;font-size:11px">${FIELD_LABEL[c.f]}</td>
+          <td style="padding:5px 12px;font-size:11px;font-family:var(--mono)">${c.raw || '(비움)'}</td>
+          <td style="padding:5px 12px;font-size:11px;font-family:var(--mono);${c.ok ? 'color:var(--accent);font-weight:600' : 'color:var(--danger)'}">${c.ok ? (c.val === '' || c.val == null ? '(비우기)' : c.val) : '인식 실패'}</td>
+        </tr>`).join('')}
+      ${_pasteChanges.length > 60 ? `<tr><td colspan="4" style="padding:8px 12px;font-size:11px;color:var(--text3)">… 외 ${_pasteChanges.length - 60}개</td></tr>` : ''}
+      </tbody>
+    </table>`;
+  document.getElementById('paste-modal').classList.add('open');
+}
+
+async function confirmPaste() {
+  const btn = document.getElementById('paste-confirm-btn');
+  btn.disabled = true; btn.textContent = '적용 중...';
+  const valid = _pasteChanges.filter(c => c.ok);
+  await applyChanges(valid, `${valid.length}개 셀 붙여넣기 완료`);
+  btn.disabled = false; btn.textContent = '적용';
+  document.getElementById('paste-modal').classList.remove('open');
+  logActivity('update', 'order', 'paste', `붙여넣기: ${valid.length}개 셀 수정`);
+  _pasteChanges = [];
 }
 
 // ─── 원가뷰 ──────────────────────────────────────────────────
@@ -1432,18 +2062,38 @@ function toggleSheetDetail(domId) {
   arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 }
 
-function renderCostView() {
-  const el = document.getElementById('cost-view-content');
-  let html = '';
+// 원가 뷰 모드: 'feed' (전체 카드 나열) | 'list' (우측 목록 + 가운데 상세)
+let costViewMode = 'feed';
+let costViewSelectedKey = null;
 
-  // 선적일 기준 자동 그룹핑
+function switchCostViewMode(mode) {
+  costViewMode = mode;
+  costViewSelectedKey = null; // 매번 첫 항목으로
+  // 탭 버튼 활성 표시
+  const feedBtn = document.getElementById('cost-tab-feed');
+  const listBtn = document.getElementById('cost-tab-list');
+  if (feedBtn && listBtn) {
+    const active = 'background:var(--text);color:#fafafa';
+    const inactive = 'background:#fff;color:var(--text2)';
+    feedBtn.style.cssText = 'padding:6px 16px;font-size:12px;font-weight:500;border:1px solid var(--border);border-radius:6px;cursor:pointer;' + (mode==='feed'?active:inactive);
+    listBtn.style.cssText = 'padding:6px 16px;font-size:12px;font-weight:500;border:1px solid var(--border);border-radius:6px;cursor:pointer;' + (mode==='list'?active:inactive);
+  }
+  renderCostView();
+}
+
+function selectCostGroup(key) {
+  costViewSelectedKey = key;
+  renderCostView();
+}
+
+// 선적 묶음별로 그룹화 + 정렬된 키 배열 반환
+function buildCostGroups() {
   const groupMap = {};
   orders.forEach(o => {
     const key = getGroupKey(o);
     if (!groupMap[key]) groupMap[key] = [];
     groupMap[key].push(o);
   });
-  // 미배정 최상단 → 미입력(날짜 내림차순) → 확정(날짜 내림차순)
   const keys = Object.keys(groupMap).sort((a, b) => {
     if (a === '__unassigned__') return -1;
     if (b === '__unassigned__') return 1;
@@ -1453,10 +2103,77 @@ function renderCostView() {
     if (aSaved && !bSaved) return 1;
     return b.split('::')[0].localeCompare(a.split('::')[0]);
   });
+  return { groupMap, keys };
+}
 
-  keys.forEach(key => {
+function renderCostView() {
+  const body = document.getElementById('cost-view-body');
+  const { groupMap, keys } = buildCostGroups();
+
+  if (costViewMode === 'list') {
+    // 첫 항목 자동 선택
+    if (!costViewSelectedKey || !groupMap[costViewSelectedKey]) {
+      costViewSelectedKey = keys[0] || null;
+    }
+    body.innerHTML = `
+      <div style="flex:1;overflow:auto;padding:24px">
+        <div style="max-width:800px;margin:0 auto">
+          <div style="margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text)">선적 묶음별 원가 현황</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:3px">우측 목록에서 선택한 그룹의 상세를 표시합니다</div>
+          </div>
+          <div id="cost-view-content">${costViewSelectedKey ? buildGroupCardHtml(costViewSelectedKey, groupMap[costViewSelectedKey], true) : '<div style="padding:40px;text-align:center;color:var(--text3);font-size:12px">표시할 선적 묶음이 없습니다</div>'}</div>
+        </div>
+      </div>
+      <div style="width:300px;border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;flex-shrink:0">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">선적 묶음 목록 <span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(${keys.length})</span></div>
+        <div style="flex:1;overflow:auto">${keys.map(k => buildListItemHtml(k, groupMap[k])).join('')}</div>
+      </div>
+    `;
+  } else {
+    // feed 모드: 기존처럼 전체 카드 나열
+    body.innerHTML = `
+      <div style="flex:1;overflow:auto;padding:24px">
+        <div style="max-width:800px;margin:0 auto">
+          <div style="margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text)">선적 묶음별 원가 현황</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:3px">선적일 기준 자동 그룹핑 · 같은 날 다른 배는 발주 상세에서 호선 구분 입력</div>
+          </div>
+          <div id="cost-view-content">${keys.map(k => buildGroupCardHtml(k, groupMap[k], false)).join('')}</div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// 우측 목록 항목 (그룹명 + 상태배지 + FCL/LCL + 대표상품)
+function buildListItemHtml(key, sgOrders) {
+  const sg = shipGroups[key] || defaultCostEntry();
+  const isSelected = key === costViewSelectedKey;
+  const hasCost = sg.saved;
+  const name = getGroupName(key);
+  const totalCbm = sgOrders.reduce((s,o)=>s+((getProduct(o.pid).cbm||0)*o.qty),0);
+  const cbmType = totalCbm >= 15 ? 'FCL' : 'LCL'; // 15 CBM 기준 휴리스틱
+  // 대표상품: 수량 가장 많은 제품의 이름
+  const repOrder = [...sgOrders].sort((a,b)=>b.qty-a.qty)[0];
+  const repName = repOrder ? getProduct(repOrder.pid).name : '';
+  const repExtra = sgOrders.length > 1 ? ` 외 ${sgOrders.length-1}건` : '';
+  const statusBadge = hasCost
+    ? '<span style="font-size:9px;background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent-border);border-radius:3px;padding:1px 5px;font-weight:600">확정</span>'
+    : '<span style="font-size:9px;background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-border);border-radius:3px;padding:1px 5px;font-weight:600">미입력</span>';
+  const cbmBadge = `<span style="font-size:9px;background:${cbmType==='FCL'?'var(--info-bg)':'#f3f4f6'};color:${cbmType==='FCL'?'var(--info)':'var(--text3)'};border:1px solid ${cbmType==='FCL'?'var(--info-border)':'var(--border)'};border-radius:3px;padding:1px 5px;font-weight:600">${cbmType}</span>`;
+  return `<div onclick="selectCostGroup('${key}')" style="padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;background:${isSelected?'var(--accent-bg)':'transparent'};border-left:3px solid ${isSelected?'var(--accent)':'transparent'}" onmouseover="if(!this.dataset.sel)this.style.background='var(--surface2)'" onmouseout="if(!this.dataset.sel)this.style.background='${isSelected?'var(--accent-bg)':'transparent'}'" ${isSelected?'data-sel="1"':''}>
+    <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;flex-wrap:wrap">
+      ${statusBadge}${cbmBadge}
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">${name}</div>
+    <div style="font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${repName}${repExtra}</div>
+  </div>`;
+}
+
+// 단일 그룹 카드 HTML 빌더 (피드/목록 양쪽에서 사용)
+function buildGroupCardHtml(key, sgOrders, autoExpand) {
     const sg = shipGroups[key] || defaultCostEntry();
-    const sgOrders = groupMap[key];
     const inspectKrw = (sg.inspectCny||0) * (sg.inspectRate || 219.63);
     const shipping = (sg.freight||0)+(sg.bl||0)+(sg.doCharge||0)+(sg.origin||0)+inspectKrw;
     const custVat = (sg.customs||0)+(sg.vat||0); // 관세+부가세만
@@ -1473,7 +2190,7 @@ function renderCostView() {
     const domId = sgDomId(key);
     const isUnassigned = key === '__unassigned__';
 
-    html += `<div style="border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden" id="sg-card-${domId}">
+    return `<div style="border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden" id="sg-card-${domId}">
       <div style="background:var(--surface);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none" onclick="toggleSheetDetail('${domId}')">
         <div>
           <div style="font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:8px">
@@ -1494,7 +2211,7 @@ function renderCostView() {
       </div>
 
       <!-- 접힌 요약 -->
-      <div id="sg-summary-${domId}" style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px;background:var(--surface2);border-bottom:1px solid var(--border)">
+      <div id="sg-summary-${domId}" style="padding:8px 16px;${autoExpand?'display:none;':'display:flex;'}flex-wrap:wrap;gap:12px;background:var(--surface2);border-bottom:1px solid var(--border)">
         ${sgOrders.map(o => {
           const p = getProduct(o.pid);
           const totalPerUnit = (o.rate*o.price*1.0396) + cbmRate*(p.cbm||0) + vatRate*(o.rate*o.price*1.0396);
@@ -1507,7 +2224,7 @@ function renderCostView() {
       </div>
 
       <!-- 펼쳐지는 상세 패널 (엑셀 시트 스타일) -->
-      <div id="sg-detail-${domId}" style="display:none">
+      <div id="sg-detail-${domId}" style="display:${autoExpand?'block':'none'}">
         <div style="display:grid;grid-template-columns:270px 1fr;border-top:1px solid var(--border)">
 
           <!-- 좌측: 비용 내역 -->
@@ -1614,8 +2331,6 @@ function renderCostView() {
         </div>
       </div>
     </div>`;
-  }); // end keys.forEach
-  el.innerHTML = html;
 }
 
 // ─── 제품 DB 뷰 ──────────────────────────────────────────────
@@ -1745,7 +2460,8 @@ function openOrderModal() {
 }
 
 function onProductSelect() {
-  const opts = products.filter(p => p.name === _psName);
+  const opts = products.filter(p => p.name === _psName)
+    .sort((a, b) => (a.option || '').localeCompare(b.option || '', 'ko', { numeric: true, sensitivity: 'base' }));
   const sel = document.getElementById('o-option');
   sel.innerHTML = opts.map(p => `<option value="${p.id}">${p.option}</option>`).join('');
   document.getElementById('o-option-rows').style.display = 'none';
@@ -2701,59 +3417,7 @@ function updateBulkBar() {
     cnt.textContent = `${selectedOrders.size}개 선택됨`;
   } else {
     bar.classList.remove('active');
-    ['b-orderDate','b-factoryDate','b-whDate','b-shipDate','b-arriveDate'].forEach(id => {
-      document.getElementById(id).value = '';
-    });
   }
-}
-
-function applyBulkEdit() {
-  const fields = {
-    orderDate:   document.getElementById('b-orderDate').value,
-    factoryDate: document.getElementById('b-factoryDate').value,
-    whDate:      document.getElementById('b-whDate').value,
-    shipDate:    document.getElementById('b-shipDate').value,
-    arriveDate:  document.getElementById('b-arriveDate').value,
-  };
-  const hasAny = Object.values(fields).some(v => v);
-  if (!hasAny) { showToast('변경할 날짜를 하나 이상 입력해 주세요'); return; }
-
-  const shipDate = fields.shipDate;
-  if (shipDate && shipGroups[shipDate]?.saved) {
-    const unconfKey = Object.keys(shipGroups).find(k =>
-      k !== shipDate && k.startsWith(shipDate + '::') && !shipGroups[k].saved
-    );
-    showShipConflictModal(shipDate, unconfKey, (tag) => {
-      commitBulkEdit(fields, tag);
-    });
-    return;
-  }
-
-  commitBulkEdit(fields, '');
-}
-
-async function commitBulkEdit(fields, shipTag) {
-  const updatedOrders = [];
-  selectedOrders.forEach(oid => {
-    const o = getOrder(oid);
-    if (!o) return;
-    Object.entries(fields).forEach(([key, val]) => {
-      if (!val) return;
-      if (key === 'shipDate') {
-        o.shipDate = val;
-        o.shipTag = shipTag;
-      } else {
-        o[key] = val;
-      }
-    });
-    if (o.arriveDate) o.status = (o.extraCosts?.length > 0) ? 'delay' : 'done';
-    updatedOrders.push(o);
-  });
-  clearSelection();
-  renderBoard();
-  showToast('일괄 수정되었습니다');
-  await Promise.all(updatedOrders.map(o => syncOrder(o)));
-  await logActivity('update', 'order', 'bulk', `일괄 수정 ${updatedOrders.length}건`);
 }
 
 function getVisibleOrderIds() {
@@ -2779,6 +3443,65 @@ function clearSelection() {
   lastSelectedOrderId = null;
   updateBulkBar();
   renderBoard();
+}
+
+// ─── 물류 그룹 (수동 묶기) ────────────────────────────────────
+function groupColor(id) {
+  if (!id) return '';
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360}, 65%, 50%)`;
+}
+
+async function groupSelected() {
+  const ids = [...selectedOrders];
+  if (ids.length < 2) { showToast('2개 이상 선택해주세요'); return; }
+  const gid = 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  ids.forEach(id => {
+    const o = orders.find(x => x.id === id);
+    if (o) o.groupId = gid;
+  });
+  saveCache();
+  saveGroupsLocal();
+  showToast(`${ids.length}건을 한 그룹으로 묶었습니다`);
+  clearSelection();
+}
+
+async function ungroupSelected() {
+  const ids = [...selectedOrders];
+  if (ids.length === 0) { showToast('선택된 항목이 없습니다'); return; }
+  let cnt = 0;
+  ids.forEach(id => {
+    const o = orders.find(x => x.id === id);
+    if (o && o.groupId) { delete o.groupId; cnt++; }
+  });
+  if (cnt === 0) { showToast('그룹에 속한 항목이 없습니다'); return; }
+  saveCache();
+  saveGroupsLocal();
+  showToast(`${cnt}건을 그룹에서 제외했습니다`);
+  clearSelection();
+}
+
+// 정렬된 리스트에서 연속 같은 groupId 런 계산
+function computeGroupRuns(list) {
+  const runs = {};
+  let i = 0;
+  while (i < list.length) {
+    const gid = list[i].groupId;
+    if (gid) {
+      let j = i + 1;
+      while (j < list.length && list[j].groupId === gid) j++;
+      const size = j - i;
+      const color = groupColor(gid);
+      for (let k = i; k < j; k++) {
+        runs[list[k].id] = { groupId: gid, color, isStart: k === i, isEnd: k === j - 1, size };
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return runs;
 }
 
 // ─── 컬럼 리사이즈 ───────────────────────────────────────────
@@ -2836,6 +3559,8 @@ function importOrderExcel(input) {
         ocode: col('옵션코드'), seq: col('차수'), qty: col('발주수량'),
         rate: col('환율'), orderDate: col('발주일'), factoryDate: col('공장출고'),
         whDate: col('위해입고'), shipDate: col('선적일'), arriveDate: col('국내입고'),
+        price: headers.findIndex(h => h.includes('원가') && !h.includes('도착')),
+        costPerUnit: col('도착원가'),
       };
 
       // 날짜 연도 추정: 발주일 컬럼 순서대로 월이 감소하면 연도 증가
@@ -2854,6 +3579,9 @@ function importOrderExcel(input) {
           orderSeq: String(r[CI.seq] ?? '').trim(),
           qty: parseFloat(r[CI.qty]) || 0,
           rate: parseFloat(r[CI.rate]) || 0,
+          price: CI.price >= 0 ? (parseFloat(r[CI.price]) || 0) : 0,
+          costPerUnit: CI.costPerUnit >= 0 && r[CI.costPerUnit] !== '' && isFinite(parseFloat(r[CI.costPerUnit]))
+            ? Math.round(parseFloat(r[CI.costPerUnit]) * 100) / 100 : null,
           orderDate: parseExcelDateStr(r[CI.orderDate], baseYear),
           factoryDate: parseExcelDateStr(r[CI.factoryDate], baseYear),
           whDate: parseExcelDateStr(r[CI.whDate], baseYear),
@@ -2938,6 +3666,9 @@ function renderImportPreview() {
       <td style="padding:6px 10px;font-size:11px;color:var(--text2)">${r.option}</td>
       <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.orderSeq}</td>
       <td style="padding:6px 10px;font-size:11px;text-align:right">${r.qty || '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono)">${r.rate || '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono)">${r.price ? '¥' + r.price : '—'}</td>
+      <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono)">${r.costPerUnit != null ? '₩' + Math.round(r.costPerUnit).toLocaleString() : '—'}</td>
       <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.orderDate || '—'}</td>
       <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.shipDate || '—'}</td>
       <td style="padding:6px 10px;font-size:11px;font-family:var(--mono)">${r.arriveDate || '—'}</td>
@@ -2953,6 +3684,9 @@ function renderImportPreview() {
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">옵션</th>
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">차수</th>
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">수량</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">환율</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">원가(위안)</th>
+          <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">도착원가</th>
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">발주일</th>
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">선적일</th>
           <th style="padding:8px 10px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">국내입고</th>
@@ -2968,42 +3702,67 @@ async function confirmImport() {
   btn.disabled = true; btn.textContent = '저장 중...';
 
   const toImport = _importRows.filter(r => !r.isDup);
-  let savedProds = 0, savedOrders = 0;
 
-  // 1. 신규 제품 저장
+  // 1. 신규 제품 배치 저장
   const newProds = toImport.filter(r => !r.existProd)
     .reduce((acc, r) => {
       if (!acc.find(p => p.name === r.name && p.option === r.option)) acc.push(r);
       return acc;
-    }, []);
+    }, [])
+    .map(r => ({ id: Date.now().toString(36) + Math.random().toString(36).slice(2), name: r.name, option: r.option, pcode: r.pcode, ocode: r.ocode, cbm: 0, supplier: '', url: '', imageUrl: '' }));
 
-  for (const r of newProds) {
-    const p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), name: r.name, option: r.option, pcode: r.pcode, ocode: r.ocode, cbm: 0, supplier: '', url: '', imageUrl: '' };
-    products.push(p);
-    await syncProduct(p);
-    savedProds++;
+  if (newProds.length) {
+    const { error } = await sb.from('products').upsert(newProds.map(p => ({
+      id: p.id, name: p.name, option: p.option, pcode: p.pcode, ocode: p.ocode,
+      cbm: p.cbm, supplier: p.supplier, url: p.url, image_url: null,
+    })));
+    if (error) {
+      btn.disabled = false; btn.textContent = '가져오기 확정';
+      showToast('제품 저장 실패: ' + error.message);
+      return;
+    }
+    products.push(...newProds);
   }
 
-  // 2. 발주 저장 (50개씩 배치)
-  for (const r of toImport) {
+  // 2. 발주 배치 저장 (100건 단위)
+  const newOrders = toImport.map(r => {
     const prod = products.find(p => p.name === r.name && p.option === r.option);
-    if (!prod || !r.qty) continue;
-    const o = {
+    if (!prod || !r.qty) return null;
+    return {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-      pid: prod.id, qty: r.qty, rate: r.rate, price: 0, orderSeq: r.orderSeq,
+      pid: prod.id, qty: r.qty, rate: r.rate, price: r.price || 0, orderSeq: r.orderSeq,
       orderDate: r.orderDate, factoryDate: r.factoryDate, factoryMemo: '',
       whDate: r.whDate, shipDate: r.shipDate, arriveDate: r.arriveDate,
-      shipTag: '', costPerUnit: null, extraCosts: [], status: 'active',
+      shipTag: '', costPerUnit: r.costPerUnit ?? null, extraCosts: [], status: 'active',
     };
-    orders.push(o);
-    await syncOrder(o);
-    savedOrders++;
-    await new Promise(res => setTimeout(res, 30)); // rate limit 방지
+  }).filter(Boolean);
+
+  let savedOrders = 0;
+  for (let i = 0; i < newOrders.length; i += 100) {
+    const chunk = newOrders.slice(i, i + 100);
+    const { error } = await sb.from('orders').upsert(chunk.map(o => ({
+      id: o.id, pid: o.pid, ship_tag: o.shipTag, qty: o.qty, rate: o.rate, price: o.price,
+      order_date: o.orderDate || null, factory_date: o.factoryDate || null, factory_memo: null,
+      wh_date: o.whDate || null, ship_date: o.shipDate || null, arrive_date: o.arriveDate || null,
+      cost_per_unit: o.costPerUnit, extra_costs: o.extraCosts, status: o.status,
+      order_seq: o.orderSeq || '',
+      updated_at: new Date().toISOString(),
+    })));
+    if (error) {
+      btn.disabled = false; btn.textContent = '가져오기 확정';
+      showToast(`발주 저장 실패 (${savedOrders}건 저장 후 중단): ` + error.message);
+      renderBoard();
+      return;
+    }
+    orders.push(...chunk);
+    savedOrders += chunk.length;
+    btn.textContent = `저장 중... ${savedOrders}/${newOrders.length}`;
   }
 
+  saveCache();
   closeImportModal();
   renderBoard();
-  showToast(`제품 ${savedProds}개, 발주 ${savedOrders}건 가져오기 완료`);
+  showToast(`제품 ${newProds.length}개, 발주 ${savedOrders}건 가져오기 완료`);
   await logActivity('create', 'order', 'import', `엑셀 가져오기: 발주 ${savedOrders}건`);
 }
 
