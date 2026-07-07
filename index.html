@@ -4604,13 +4604,15 @@ async function parseSettlementPdfs(input) {
   for (const f of files) {
     try {
       let pages = await pdfTextLines(f);
-      // 정산서형(요약+상세 인보이스 동봉)은 요약 페이지만 사용 — 같은 비용 중복 방지
-      if (pages.length > 1 && /정산서/.test(pages[0].join(''))) pages = [pages[0]];
+      // 정산서·경비청구서형은 요약부만 사용 — 뒤에 붙는 상세 INVOICE와 중복 방지
+      const isSummaryDoc = /정산서|경비청구서|경비내역/.test(pages.flat().join('').replace(/\s+/g, ''));
+      if (pages.length > 1 && isSummaryDoc) pages = [pages[0]];
       const lines = pages.flat();
       const seen = new Set();
       for (const line of lines) {
         // 글자가 한 자씩 떨어져 추출되는 PDF(정진해운 등) 대응 — 공백 제거본으로 판정
         const flat = line.replace(/\s+/g, '');
+        if (isSummaryDoc && /INVOICE/i.test(flat)) break; // 같은 페이지의 상세 구간 시작 → 중단
         if (skipRe.test(flat)) continue;
         const rule = PDF_RULES.find(r => r.re.test(flat));
         if (!rule) continue;
