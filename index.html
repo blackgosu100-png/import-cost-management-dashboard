@@ -42,7 +42,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 
 /* Layout */
 .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow: hidden; }
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow: hidden; z-index: 90; }
 .main { display: flex; flex-direction: column; min-height: 100vh; overflow: hidden; }
 
 /* Sidebar */
