@@ -527,6 +527,10 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
             엑셀 업로드
           </button>
           <input type="file" id="excel-upload-input" accept=".xlsx,.xls" style="display:none" onchange="uploadProductExcel(this)">
+          <button class="btn btn-sm" onclick="document.getElementById('img-folder-input').click()" title="옵션코드 파일명(예: 720cin-20.png)으로 자동 매칭">
+            🖼 이미지 일괄 업로드
+          </button>
+          <input type="file" id="img-folder-input" webkitdirectory multiple style="display:none" onchange="bulkUploadProductImages(this)">
           <button class="btn btn-primary btn-sm" onclick="openProductModal()">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
             제품 등록
@@ -2874,6 +2878,37 @@ async function importProductDb2(rows) {
   renderBoard();
   showToast(`상품 DB 반영 완료 — 갱신 ${updated} · 신규 ${created}`);
   logActivity('update', 'product', 'db2-import', `상품DB 가져오기: 갱신 ${updated}, 신규 ${created}`);
+}
+
+// ─── 제품 이미지 일괄 업로드 — 파일명(옵션코드)으로 자동 매칭 ──
+async function bulkUploadProductImages(input) {
+  const files = [...input.files].filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f.name));
+  input.value = '';
+  if (!files.length) { showToast('이미지 파일이 없습니다'); return; }
+  let done = 0, miss = 0, fail = 0, i = 0;
+  showToast(`이미지 ${files.length}개 업로드 시작...`);
+  for (const f of files) {
+    i++;
+    const key = f.name.replace(/\.[^.]+$/, '');
+    // 1순위: 옵션코드 일치, 2순위: 상품명_옵션 형태 일치
+    const p = products.find(x => x.ocode === key)
+      || products.find(x => (x.name + '_' + x.option).replace(/[\\/:*?"<>|\s]/g, '_') === key);
+    if (!p) { miss++; continue; }
+    try {
+      const path = `product_${p.id}.${f.name.split('.').pop().toLowerCase()}`;
+      const { error } = await sb.storage.from('product-images').upload(path, f, { upsert: true });
+      if (error) throw error;
+      p.imageUrl = sb.storage.from('product-images').getPublicUrl(path).data.publicUrl;
+      await syncProduct(p);
+      done++;
+      if (i % 20 === 0) showToast(`이미지 업로드 중... ${i}/${files.length}`);
+    } catch (e) { fail++; }
+  }
+  saveCache();
+  renderProductView();
+  renderBoard();
+  showToast(`이미지 업로드 완료 — 연결 ${done}건 · 매칭 실패 ${miss}건${fail ? ` · 오류 ${fail}건` : ''}`);
+  if (done) logActivity('update', 'product', 'img-bulk', `제품 이미지 일괄 업로드 ${done}건`);
 }
 
 // ─── 제품 DB: 엑셀형 그리드 (상품db2 구조 반영) ──────────────
