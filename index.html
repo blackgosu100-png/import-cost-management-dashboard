@@ -921,7 +921,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
     <div class="modal-body" style="padding:0">
       <div id="pdfcost-wrap"></div>
       <div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">
-        왼쪽 인식값과 오른쪽 정산서 원본을 대조해 확인하세요. 금액은 기존 입력값에 <b>더해집니다</b> — 같은 PDF를 두 번 적용하면 중복돼요.
+        왼쪽 인식값과 오른쪽 정산서 원본을 대조해 확인하세요. 적용하면 <b>정산서 값으로 설정</b>되고, 이전에 인식한 값은 새 값으로 교체돼요 (재적용해도 중복되지 않아요).
       </div>
     </div>
     <div class="modal-footer">
@@ -5415,13 +5415,19 @@ function renderPdfCostPreview() {
 }
 
 function applyPdfCost() {
-  const add = (id, v) => { const el = document.getElementById(id); el.value = Math.round((parseFloat(el.value) || 0) + v); };
+  // 재반영 중복 방지: 기존 'PDF 자동 인식' 행을 먼저 제거하고 다시 채운다
+  document.querySelectorAll('#cost-entries .cost-entry-row').forEach(row => {
+    const noteInp = [...row.querySelectorAll('input')].find(i => i.id && i.id.startsWith('ce-note-'));
+    if (noteInp && /^PDF 자동 인식/.test(noteInp.value)) row.remove();
+  });
+  // 1차 필드: 정산서 값으로 덮어쓰기(set) — 이번 정산서에 있는 항목만
+  const set = (id, v) => { if (v != null) document.getElementById(id).value = Math.round(v); };
   const sums = {};
   _pdfCostItems.forEach(it => { if (it.target !== '제외') sums[it.target] = (sums[it.target] || 0) + it.amount; });
-  if (sums['해운비']) add('c-freight', sums['해운비']);
-  if (sums['B/L수수료']) add('c-bl', sums['B/L수수료']);
-  if (sums['DO요금']) add('c-do', sums['DO요금']);
-  if (sums['원산지']) add('c-origin', sums['원산지']);
+  set('c-freight', sums['해운비']);
+  set('c-bl', sums['B/L수수료']);
+  set('c-do', sums['DO요금']);
+  set('c-origin', sums['원산지']);
   // 2차 통관 항목은 개별 행으로 추가 (메모에 출처 표시)
   _pdfCostItems.filter(it => ['관세', '부가세', '통관수수료', '내륙운송비', '장치료', '검사비 추가', '기타'].includes(it.target))
     .forEach(it => addCostEntry({ type: it.target === '기타' ? it.label.slice(0, 20) : it.target, amount: it.amount, note: 'PDF 자동 인식: ' + it.file }));
