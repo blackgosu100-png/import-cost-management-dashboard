@@ -3046,6 +3046,59 @@ async function bulkUploadProductImages(input) {
 // ─── 제품 DB: 엑셀형 그리드 (상품db2 구조 반영) ──────────────
 let _pvSearch = '', _pvBrand = '', _pvShowHidden = false, _pvSel = new Set(), _pvAnchor = null, _pvDrag = false, _pvSearchT = null;
 let _pvSkuMode = false, _pvSkuGroups = []; // SKU 모아보기 (보기 전용 — 데이터 불변)
+
+// ─── 제품 DB 열 너비 (드래그 조절 + 더블클릭 자동 맞춤, 저장됨) ──
+let _pvColW = {};
+try { _pvColW = JSON.parse(localStorage.getItem('icd_pv_colw_v1') || '{}'); } catch (e) {}
+function pvW(c) { return _pvColW[c.f] || c.w; }
+function savePvColW() { try { localStorage.setItem('icd_pv_colw_v1', JSON.stringify(_pvColW)); } catch (e) {} }
+
+let _pvRs = null;
+function pvStartResize(e, f) {
+  e.stopPropagation();
+  e.preventDefault();
+  const th = e.target.closest('th');
+  const wrap = document.getElementById('pv-table-wrap');
+  const area = wrap.getBoundingClientRect();
+  const g = document.createElement('div');
+  g.className = 'col-resize-guide';
+  g.style.top = Math.max(0, area.top) + 'px';
+  g.style.height = (Math.min(window.innerHeight, area.bottom) - Math.max(0, area.top)) + 'px';
+  document.body.appendChild(g);
+  _pvRs = { f, startX: e.clientX, startW: th.getBoundingClientRect().width, left: th.getBoundingClientRect().left, guide: g };
+  pvMoveResizeGuide(e.clientX);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+function pvMoveResizeGuide(x) {
+  if (!_pvRs) return;
+  const w = Math.max(40, _pvRs.startW + (x - _pvRs.startX));
+  _pvRs.guide.style.left = (_pvRs.left + w) + 'px';
+  _pvRs.guide.dataset.w = Math.round(w) + 'px';
+}
+document.addEventListener('mousemove', e => { if (_pvRs) pvMoveResizeGuide(e.clientX); });
+document.addEventListener('mouseup', e => {
+  if (!_pvRs) return;
+  _pvColW[_pvRs.f] = Math.max(40, Math.round(_pvRs.startW + (e.clientX - _pvRs.startX)));
+  savePvColW();
+  _pvRs.guide.remove();
+  _pvRs = null;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  renderPvTable(); pvPaintSel(); pvPaintCells();
+});
+
+// 더블클릭 = 내용 폭에 자동 맞춤 (엑셀과 동일)
+function pvAutoFit(e, f) {
+  e.stopPropagation();
+  e.preventDefault();
+  let max = 46;
+  document.querySelectorAll(`#pv-table-wrap td[data-pvf="${f}"], #pv-table-wrap th[data-pvth="${f}"]`)
+    .forEach(el => { max = Math.max(max, el.scrollWidth + 18); });
+  _pvColW[f] = Math.min(max, 520);
+  savePvColW();
+  renderPvTable(); pvPaintSel(); pvPaintCells();
+}
 // 엑셀(상품db2) 열 순서 그대로 — 바코드이미지(데이터 없음)만 생략
 const PV_COLS = [
   { f: 'brand', label: '브랜드', w: 80 },
@@ -3167,11 +3220,12 @@ function renderPvTable() {
     if (foot) foot.textContent = `SKU ${_pvSkuGroups.length}종 (옵션 ${list.length}개) · 행을 클릭하면 해당 제품의 옵션 목록으로 이동 · 수정은 옵션 목록에서`;
     return;
   }
+  const totalW = PV_COLS.reduce((s, c) => s + pvW(c), 0) + 130;
   wrap.innerHTML = `
-    <table style="border-collapse:collapse;background:var(--surface);min-width:2020px;width:100%">
+    <table style="border-collapse:collapse;background:var(--surface);min-width:${totalW}px;width:100%">
       <thead><tr style="background:var(--surface2)">
         <th style="padding:7px 4px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:38px;text-align:center">No.</th>
-        ${PV_COLS.map(c => `<th style="padding:7px 8px;font-size:11px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:${c.w}px;text-align:${c.left ? 'left' : 'center'};white-space:nowrap">${c.label}</th>`).join('')}
+        ${PV_COLS.map(c => `<th data-pvth="${c.f}" style="position:relative;padding:7px 8px;font-size:11px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:${pvW(c)}px;text-align:${c.left ? 'left' : 'center'};white-space:nowrap;user-select:none">${c.label}<span class="col-resizer" title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤" onmousedown="pvStartResize(event,'${c.f}')" ondblclick="pvAutoFit(event,'${c.f}')"></span></th>`).join('')}
         <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:52px">발주</th>
         <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:40px"></th>
       </tr></thead>
@@ -3182,7 +3236,7 @@ function renderPvTable() {
         return `<tr data-pvid="${p.id}" class="${_pvSel.has(p.id) ? 'pv-sel' : ''}" style="border-bottom:1px solid var(--border);height:34px">
           <td class="row-no" data-pvno="${p.id}">${idx + 1}</td>
           ${PV_COLS.map(c => {
-            const base = `border-right:1px solid var(--border);text-align:${c.left ? 'left' : 'center'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${c.w}px`;
+            const base = `border-right:1px solid var(--border);text-align:${c.left ? 'left' : 'center'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${pvW(c)}px`;
             if (c.img) return `<td style="${base};cursor:pointer;padding:2px" onclick="openEditProductModal('${p.id}')" title="제품 상세/이미지">${p.imageUrl ? `<img src="${p.imageUrl}" style="width:26px;height:26px;object-fit:cover;border-radius:4px;vertical-align:middle" loading="lazy">` : '<span style="color:var(--border2)">＋</span>'}</td>`;
             if (c.link) return `<td class="cell-edit" data-pvid="${p.id}" data-pvf="url" style="${base};padding:4px" ondblclick="pvEditCell(this)">${p.url ? `<a href="${p.url}" target="_blank" onclick="event.stopPropagation()" style="text-decoration:none">🔗</a>` : '—'}</td>`;
             const v = c.calc ? total : p[c.f];
