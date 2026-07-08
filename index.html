@@ -3045,6 +3045,7 @@ async function bulkUploadProductImages(input) {
 
 // ─── 제품 DB: 엑셀형 그리드 (상품db2 구조 반영) ──────────────
 let _pvSearch = '', _pvBrand = '', _pvShowHidden = false, _pvSel = new Set(), _pvAnchor = null, _pvDrag = false, _pvSearchT = null;
+let _pvOpenGroups = new Set(), _pvAllOpen = false; // SKU 그룹 접기/펼치기
 // 엑셀(상품db2) 열 순서 그대로 — 바코드이미지(데이터 없음)만 생략
 const PV_COLS = [
   { f: 'brand', label: '브랜드', w: 80 },
@@ -3084,6 +3085,7 @@ function renderProductView() {
       <span class="todo-chip ${!_pvBrand && !_pvShowHidden ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvBrand='';_pvShowHidden=false;renderProductView()">전체 ${visible.length}</span>
       ${brands.map(b => `<span class="todo-chip ${_pvBrand === b ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvBrand='${b}';_pvShowHidden=false;renderProductView()">${b} ${visible.filter(p => p.brand === b).length}</span>`).join('')}
       ${hiddenCnt ? `<span class="todo-chip ${_pvShowHidden ? 'on todo-amber' : 'todo-none'}" style="cursor:pointer" onclick="_pvShowHidden=!_pvShowHidden;_pvBrand='';renderProductView()">🙈 숨김 ${hiddenCnt}</span>` : ''}
+      <span class="todo-chip todo-none" style="cursor:pointer" onclick="_pvAllOpen=!_pvAllOpen;_pvOpenGroups.clear();renderProductView()">${_pvAllOpen ? '▾ 전체 접기' : '▸ 전체 펼치기'}</span>
       <span style="font-size:11px;color:var(--text3);margin-left:auto">더블클릭 수정 · No. 드래그 다중선택 · No. 우클릭 숨김/삭제</span>
     </div>
     <div id="pv-table-wrap" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -3099,7 +3101,7 @@ function pvSearchInput(v) {
   _pvSearchT = setTimeout(renderPvTable, 150);
 }
 
-function pvList() {
+function pvFiltered() {
   const q = _pvSearch.toLowerCase();
   return products.filter(p => {
     if (!!p.hidden !== _pvShowHidden) return false;
@@ -3107,6 +3109,42 @@ function pvList() {
     if (q && !(p.name + p.option + (p.pcode || '') + (p.ocode || '') + (p.barcode || '')).toLowerCase().includes(q)) return false;
     return true;
   });
+}
+
+// SKU(상품명) 단위 그룹 — 파일 순서(sortOrder) 유지
+function pvGroups() {
+  const groups = [], idx = {};
+  pvFiltered().forEach(p => {
+    const k = p.name;
+    if (!(k in idx)) { idx[k] = groups.length; groups.push({ key: k, items: [] }); }
+    groups[idx[k]].items.push(p);
+  });
+  return groups;
+}
+
+// 검색 중엔 항상 펼침, 옵션 1개짜리는 그룹 없이 항상 표시
+function pvGroupOpen(key) { return !!_pvSearch || _pvAllOpen || _pvOpenGroups.has(key); }
+
+function pvList() {
+  return pvGroups().flatMap(g => (g.items.length === 1 || pvGroupOpen(g.key)) ? g.items : []);
+}
+
+function pvToggleGroup(i) {
+  if (_pvSearch) return; // 검색 중엔 항상 펼침 상태
+  const g = pvGroups()[i];
+  if (!g) return;
+  if (_pvAllOpen) {
+    _pvAllOpen = false;
+    _pvOpenGroups = new Set(pvGroups().map(x => x.key));
+    _pvOpenGroups.delete(g.key);
+  } else if (_pvOpenGroups.has(g.key)) {
+    _pvOpenGroups.delete(g.key);
+  } else {
+    _pvOpenGroups.add(g.key);
+  }
+  renderPvTable();
+  pvPaintSel();
+  pvPaintCells();
 }
 
 function renderPvTable() {
@@ -3123,10 +3161,11 @@ function renderPvTable() {
         <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:40px"></th>
       </tr></thead>
       <tbody>
-      ${list.map((p, idx) => {
-        const cnt = orders.filter(o => o.pid === p.id).length;
-        const total = (p.costKrw != null && p.parcelFee != null) ? +p.costKrw + +p.parcelFee : null;
-        return `<tr data-pvid="${p.id}" class="${_pvSel.has(p.id) ? 'pv-sel' : ''}" style="border-bottom:1px solid var(--border);height:34px">
+      ${(() => {
+        const rowHtml = (p, idx) => {
+          const cnt = orders.filter(o => o.pid === p.id).length;
+          const total = (p.costKrw != null && p.parcelFee != null) ? +p.costKrw + +p.parcelFee : null;
+          return `<tr data-pvid="${p.id}" class="${_pvSel.has(p.id) ? 'pv-sel' : ''}" style="border-bottom:1px solid var(--border);height:34px">
           <td class="row-no" data-pvno="${p.id}">${idx + 1}</td>
           ${PV_COLS.map(c => {
             const base = `border-right:1px solid var(--border);text-align:${c.left ? 'left' : 'center'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${c.w}px`;
@@ -3139,11 +3178,29 @@ function renderPvTable() {
           <td style="text-align:center"><span class="badge badge-${cnt ? 'blue' : 'gray'}">${cnt}</span></td>
           <td style="text-align:center"><button class="btn btn-ghost btn-sm" onclick="openEditProductModal('${p.id}')">✎</button></td>
         </tr>`;
-      }).join('')}
+        };
+        let no = 0;
+        return pvGroups().map((g, gi) => {
+          // 옵션 1개짜리는 그룹 없이 바로 표시
+          if (g.items.length === 1) return rowHtml(g.items[0], no++);
+          const open = pvGroupOpen(g.key);
+          const first = g.items[0];
+          const ordCnt = g.items.reduce((s, p) => s + orders.filter(o => o.pid === p.id).length, 0);
+          const header = `<tr class="pv-group" onclick="pvToggleGroup(${gi})" style="cursor:pointer;background:#eef2f7;height:30px;border-bottom:1px solid var(--border)">
+            <td style="text-align:center;color:var(--text2);font-size:11px;border-right:1px solid var(--border)">${open ? '▾' : '▸'}</td>
+            <td colspan="${PV_COLS.length + 2}" style="padding:4px 10px;font-size:12px;font-weight:700;color:#334155">
+              ${first.imageUrl ? `<img src="${first.imageUrl}" style="width:22px;height:22px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px" loading="lazy">` : ''}${g.key}
+              <span style="font-weight:500;color:var(--text3);font-size:11px;margin-left:8px">옵션 ${g.items.length}개${first.brand ? ' · ' + first.brand : ''}${first.pcode ? ' · ' + first.pcode : ''}${ordCnt ? ` · 발주 ${ordCnt}건` : ''}</span>
+            </td>
+          </tr>`;
+          return header + (open ? g.items.map(p => rowHtml(p, no++)).join('') : '');
+        }).join('');
+      })()}
       </tbody>
     </table>`;
   const foot = document.getElementById('pv-foot');
-  if (foot) foot.textContent = `${list.length}개 표시 / 전체 ${products.length}개${_pvShowHidden ? ' (숨김만 보는 중)' : ''} · 원가+택배는 자동 계산 · 이미지·링크·상세는 ✎에서`;
+  const gs = pvGroups();
+  if (foot) foot.textContent = `제품 ${gs.length}종 · 표시 중 옵션 ${list.length}개 / 전체 ${products.length}개${_pvShowHidden ? ' (숨김만 보는 중)' : ''} · 그룹 제목 클릭으로 옵션 펼치기/접기`;
 }
 
 // ─── 제품 DB 행 선택 (No. 열 — 보드와 동일한 조작) ──────────
