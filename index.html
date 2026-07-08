@@ -620,7 +620,8 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
           </div>
           <div class="form-group">
             <label class="form-label">환율 (발주일 기준) <span>*</span> <span id="o-rate-status" style="font-weight:400;color:var(--text3);font-size:10px"></span></label>
-            <input class="form-input" id="o-rate" type="number" placeholder="불러오는 중...">
+            <input class="form-input" id="o-rate" type="number" placeholder="불러오는 중..." oninput="checkRateInput('o-rate','o-rate-warn')">
+            <div id="o-rate-warn" style="font-size:10.5px;color:var(--danger);font-weight:600;margin-top:3px"></div>
           </div>
         </div>
       </div>
@@ -970,7 +971,8 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       <div style="display:flex;gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap">
         <label style="font-size:11px;color:var(--text2)">발주일 <input type="date" id="po-date" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"></label>
         <label style="font-size:11px;color:var(--text2)">차수 <input id="po-seq" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:70px"></label>
-        <label style="font-size:11px;color:var(--text2)">환율 <input id="po-rate" type="number" step="any" placeholder="예: 224.28" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px"></label>
+        <label style="font-size:11px;color:var(--text2)">환율 <input id="po-rate" type="number" step="any" placeholder="예: 224.28" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px" oninput="checkRateInput('po-rate','po-rate-warn')"></label>
+        <span id="po-rate-warn" style="font-size:10.5px;color:var(--danger);font-weight:600"></span>
         <span style="font-size:11px;color:var(--text3)">발주일·차수는 파일명에서 자동 인식 — 다르면 고쳐주세요</span>
       </div>
       <div style="overflow:auto;max-height:52vh" id="po-preview-wrap"></div>
@@ -1610,6 +1612,8 @@ function renderBoard() {
 
   // 물류 그룹 병합 정보 (연속된 같은 groupId만 rowspan 적용)
   const groupRuns = computeGroupRuns(filtered);
+  // 원가 급변 표시용 맵 (같은 제품 직전 대비 ±30%)
+  const _costBadMap = new Map(computeAnomalies().costBad.map(x => [x.o.id, x]));
 
   // 행 나열 (그룹 헤더 없음 — 엑셀 방식)
   filtered.forEach((o, _fi) => {
@@ -1629,8 +1633,9 @@ function renderBoard() {
       openDetailModal(o.id);
     };
 
+    const _cb = _costBadMap.get(o.id);
     const costCell = o.costPerUnit
-      ? `<div class="cell-cost done">${fmt(o.costPerUnit)}</div>`
+      ? `<div class="cell-cost done">${fmt(o.costPerUnit)}${_cb ? ` <span style="cursor:help;color:var(--warn,#b45309)" title="같은 제품 직전 도착원가 ${fmt(_cb.prev.costPerUnit)} (${_cb.prev.orderDate}) 대비 ${_cb.dev > 0 ? '+' : ''}${_cb.dev.toFixed(0)}%">⚠</span>` : ''}</div>`
       : (o.arriveDate ? `<div class="cell-cost partial">미입력</div>` : `<div class="cell-cost empty">—</div>`);
 
     const run = groupRuns[o.id];
@@ -1675,6 +1680,55 @@ function renderBoard() {
 // ─── 오늘 할 일 바 ───────────────────────────────────────────
 let boardTodoFilter = null;
 
+// ─── 환율·원가 이상 감지 (190→220 복붙 사고 재발 방지) ──────
+// 환율: 발주일 순 직전 10건의 중앙값 대비 ±5% 이상 벗어나면 이상
+// 원가: 같은 제품의 직전 도착원가 대비 ±30% 이상 벗어나면 급변
+function computeAnomalies() {
+  const rated = orders.filter(o => o.rate > 0 && o.orderDate)
+    .sort((a, b) => a.orderDate < b.orderDate ? -1 : 1);
+  const rateBad = [];
+  for (let i = 0; i < rated.length; i++) {
+    const win = rated.slice(Math.max(0, i - 10), i).map(x => x.rate);
+    if (win.length < 3) continue;
+    const s = [...win].sort((a, b) => a - b);
+    const ref = s[Math.floor(s.length / 2)];
+    const dev = (rated[i].rate - ref) / ref * 100;
+    if (Math.abs(dev) >= 5) rateBad.push({ o: rated[i], ref, dev });
+  }
+  const byPid = {};
+  orders.filter(o => o.costPerUnit && o.orderDate)
+    .forEach(o => (byPid[o.pid] = byPid[o.pid] || []).push(o));
+  const costBad = [];
+  Object.values(byPid).forEach(list => {
+    list.sort((a, b) => a.orderDate < b.orderDate ? -1 : 1);
+    for (let i = 1; i < list.length; i++) {
+      const prev = list[i - 1], cur = list[i];
+      const dev = (cur.costPerUnit - prev.costPerUnit) / prev.costPerUnit * 100;
+      if (Math.abs(dev) >= 30) costBad.push({ o: cur, prev, dev });
+    }
+  });
+  return { rateBad, costBad };
+}
+
+// 입력창 실시간 환율 검증 — 최근 10건 중앙값과 비교
+function recentRateRef() {
+  const s = orders.filter(o => o.rate > 0 && o.orderDate)
+    .sort((a, b) => a.orderDate < b.orderDate ? -1 : 1)
+    .slice(-10).map(o => o.rate).sort((a, b) => a - b);
+  return s.length >= 3 ? s[Math.floor(s.length / 2)] : null;
+}
+function checkRateInput(inputId, warnId) {
+  const el = document.getElementById(warnId);
+  if (!el) return;
+  const v = parseFloat(document.getElementById(inputId)?.value);
+  const ref = recentRateRef();
+  if (!v || !ref) { el.textContent = ''; return; }
+  const dev = (v - ref) / ref * 100;
+  el.textContent = Math.abs(dev) >= 5
+    ? `⚠ 최근 환율 중앙값 ${ref} 대비 ${dev > 0 ? '+' : ''}${dev.toFixed(1)}% — 확인해 주세요`
+    : '';
+}
+
 function computeTodos() {
   const td = today();
   const week = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -1687,6 +1741,9 @@ function computeTodos() {
   if (arriveCheck.length) t.push({ key: 'arriveCheck', label: `국내입고 확인 ${arriveCheck.length}건`, cls: 'todo-red', ids: arriveCheck.map(o => o.id) });
   const noCpu = orders.filter(o => o.arriveDate && !o.costPerUnit);
   if (noCpu.length) t.push({ key: 'noCpu', label: `도착원가 미입력 ${noCpu.length}건`, cls: 'todo-violet', ids: noCpu.map(o => o.id) });
+  const { rateBad, costBad } = computeAnomalies();
+  if (rateBad.length) t.push({ key: 'rateBad', label: `⚠ 환율 이상 ${rateBad.length}건`, cls: 'todo-red', ids: rateBad.map(x => x.o.id) });
+  if (costBad.length) t.push({ key: 'costBad', label: `⚠ 원가 급변 ${costBad.length}건`, cls: 'todo-amber', ids: costBad.map(x => x.o.id) });
   return t;
 }
 
@@ -3758,7 +3815,7 @@ function openDetailModal(oid) {
       <div class="form-section-title">발주 정보</div>
       <div class="form-grid form-grid-3">
         <div class="form-group"><label class="form-label">발주수량</label><input class="form-input" id="d-qty" type="number" value="${o.qty}"></div>
-        <div class="form-group"><label class="form-label">환율</label><input class="form-input" id="d-rate" type="number" value="${o.rate}"></div>
+        <div class="form-group"><label class="form-label">환율</label><input class="form-input" id="d-rate" type="number" value="${o.rate}" oninput="checkRateInput('d-rate','d-rate-warn')"><div id="d-rate-warn" style="font-size:10.5px;color:var(--danger);font-weight:600;margin-top:3px"></div></div>
         <div class="form-group"><label class="form-label">위안단가 (¥)</label><input class="form-input" id="d-price" type="number" value="${o.price}"></div>
       </div>
       <div style="margin-top:8px;background:var(--accent-bg);border:1px solid var(--accent-border);border-radius:var(--radius);padding:8px 12px;display:flex;justify-content:space-between;font-size:12px;color:var(--accent)">
