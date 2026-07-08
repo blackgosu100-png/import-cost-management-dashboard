@@ -5221,6 +5221,7 @@ function parsePurchaseOrder(raw, hIdx, filename) {
     name: col('产品名'), model: col('型号'), opt: col('选项名'), size: col('尺寸'),
     price: headers.findIndex(h => h.includes('위안') || (h.includes('￥') && !h.includes('合计'))),
     qty: col('数量'),
+    ocode: headers.findIndex(h => h.includes('代码') || h.includes('옵션코드')), // 통일 양식: 100% 매칭용
   };
   if (C.name < 0 || C.qty < 0) { showToast('발주서 헤더를 인식하지 못했습니다'); return; }
 
@@ -5239,17 +5240,20 @@ function parsePurchaseOrder(raw, hIdx, filename) {
     const size = C.size >= 0 ? String(r[C.size] ?? '').trim().replace(/\n/g, ' ') : '';
     const dispName = rawName.replace(/\n/g, ' · ');
     const key = poNorm(rawName + size);
-    // 후보 매칭: 기억된 연결 우선, 없으면 유사도 상위
+    const oc = C.ocode >= 0 ? String(r[C.ocode] ?? '').trim() : '';
+    // 후보 매칭: ① 옵션코드 정확 일치(통일 양식) → ② 기억된 연결 → ③ 유사도 상위
     const poText = rawName + ' ' + size;
     const scored = products.filter(p => !p.hidden)
       .map(p => ({ pid: p.id, label: `${p.name} — ${p.option}`, score: poSim(poText, p.name + ' ' + p.option) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
     let sel = '', selSrc = '';
+    const byCode = oc && products.find(p => !p.hidden && p.ocode === oc);
     const alias = aliasMap[key];
-    if (alias && products.find(p => p.id === alias)) { sel = alias; selSrc = 'memory'; }
+    if (byCode) { sel = byCode.id; selSrc = 'code'; }
+    else if (alias && products.find(p => p.id === alias)) { sel = alias; selSrc = 'memory'; }
     else if (scored[0] && scored[0].score >= 0.5) { sel = scored[0].pid; selSrc = 'auto'; }
-    _poRows.push({ rawName, dispName, size, price, qty, key, sel, selSrc, candidates: scored });
+    _poRows.push({ rawName, dispName, size, price, qty, key, oc, sel, selSrc, candidates: scored });
   }
   if (!_poRows.length) { showToast('발주서에서 상품 행을 찾지 못했습니다'); return; }
 
@@ -5269,11 +5273,13 @@ function renderPOPreview() {
   const rows = _poRows.map((r, i) => {
     const isDup = r.sel && r.sel !== '__new__' &&
       orders.some(o => o.pid === r.sel && o.orderSeq === dupSeq && dupSeq);
-    const srcTag = r.selSrc === 'memory'
-      ? `<span style="font-size:10px;color:var(--info);font-weight:600">기억된 연결</span>`
-      : r.selSrc === 'auto' && r.sel
-        ? `<span style="font-size:10px;color:var(--text3)">자동 매칭 ${(r.candidates[0]?.score * 100 | 0)}%</span>`
-        : '';
+    const srcTag = r.selSrc === 'code'
+      ? `<span style="font-size:10px;color:var(--green,#16803c);font-weight:700">✓ 코드 일치 (${r.oc})</span>`
+      : r.selSrc === 'memory'
+        ? `<span style="font-size:10px;color:var(--info);font-weight:600">기억된 연결</span>`
+        : r.selSrc === 'auto' && r.sel
+          ? `<span style="font-size:10px;color:var(--text3)">자동 매칭 ${(r.candidates[0]?.score * 100 | 0)}%</span>`
+          : '';
     // DB에 있는 제품만 연결 가능 — 후보 5개 + 전체 목록에서 사람이 직접 매칭
     const candIds = new Set(r.candidates.map(c => c.pid));
     const opts = [
