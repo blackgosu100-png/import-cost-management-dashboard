@@ -5300,7 +5300,7 @@ async function parseSettlementPdfs(input) {
       const lines = pages.flat();
       const docTotal = pdfDocTotal(lines);
       const blobUrl = URL.createObjectURL(f); // 브라우저 내장 뷰어로 원본 표시
-      _pdfFiles.push({ name: f.name, docTotal, lines, blobUrl });
+      _pdfFiles.push({ name: f.name, docTotal, lines, blobUrl, file: f, appliedAmts: new Set() });
       const seen = new Set();
       for (const line of lines) {
         // 글자가 한 자씩 떨어져 추출되는 PDF(정진해운 등) 대응 — 공백 제거본으로 판정
@@ -5408,32 +5408,83 @@ function applyPdfCost() {
   // 2차 통관 항목은 개별 행으로 추가 (메모에 출처 표시)
   _pdfCostItems.filter(it => ['관세', '부가세', '통관수수료', '내륙운송비', '장치료', '검사비 추가', '기타'].includes(it.target))
     .forEach(it => addCostEntry({ type: it.target === '기타' ? it.label.slice(0, 20) : it.target, amount: it.amount, note: 'PDF 자동 인식: ' + it.file }));
+  // 파일별 반영 금액 저장 (형광펜 하이라이트용)
+  _pdfFiles.forEach(pf => {
+    pf.appliedAmts = new Set(_pdfCostItems.filter(i => i.file === pf.name && i.target !== '제외').map(i => i.amount));
+  });
   calcCostPreview();
   document.getElementById('pdfcost-modal').classList.remove('open');
   showCostPdfPanel(); // 원가 입력 모달 왼쪽에 정산서 원본을 띄워 대조하며 검토
-  showToast('원가 입력에 반영됐어요 — 왼쪽 정산서와 대조 후 저장하세요');
+  showToast('원가 입력에 반영됐어요 — 왼쪽 정산서의 노란 표시와 대조 후 저장하세요');
   _pdfCostItems = [];
 }
 
 // 원가 입력 모달을 좌(정산서 PDF)-우(입력 폼) 2단으로 — 대조하며 작업
-function showCostPdfPanel() {
+async function showCostPdfPanel() {
   const panel = document.getElementById('cost-pdf-panel');
   const box = document.getElementById('cost-modal-box');
   if (!panel || !box) return;
   const pdfs = _pdfFiles.filter(pf => pf.blobUrl);
   if (!pdfs.length) return;
-  box.style.width = '1300px';
+  // 화면 거의 꽉 차게
+  box.style.width = '98vw';
   box.style.maxWidth = '98vw';
+  box.style.maxHeight = '95vh';
+  box.style.height = '95vh';
   panel.style.display = 'block';
-  panel.innerHTML = pdfs.map(pf =>
-    `<iframe src="${pf.blobUrl}#toolbar=1&view=FitH" style="width:100%;height:${pdfs.length > 1 ? '50%' : '100%'};min-height:${pdfs.length > 1 ? '44vh' : '86vh'};border:0;display:block"></iframe>`
-  ).join('');
+  panel.style.padding = '10px';
+  panel.innerHTML = `<div style="color:#fff;padding:24px;font-size:13px">정산서 불러오는 중…</div>`;
+  const parts = [];
+  for (const pf of pdfs) {
+    let html = null;
+    try {
+      html = await Promise.race([
+        renderPdfWithHighlights(pf),
+        new Promise((_, rej) => setTimeout(() => rej('timeout'), 12000)),
+      ]);
+    } catch (e) { html = null; }
+    // 렌더 실패 시 브라우저 내장 뷰어로 폴백 (형광펜은 없지만 원본은 보임)
+    parts.push(html || `<iframe src="${pf.blobUrl}#toolbar=1&view=FitH" style="width:100%;height:92vh;border:0;background:#fff;display:block;margin-bottom:8px"></iframe>`);
+  }
+  panel.innerHTML = parts.join('');
 }
+
+// PDF를 이미지로 렌더 + 인식·반영된 금액 위치에 형광펜 오버레이
+async function renderPdfWithHighlights(pf) {
+  if (!pf.file) throw new Error('no file');
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const doc = await pdfjsLib.getDocument({ data: await pf.file.arrayBuffer() }).promise;
+  const pages = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const vp = page.getViewport({ scale: 2.2 });
+    const cv = document.createElement('canvas');
+    cv.width = vp.width; cv.height = vp.height;
+    await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    // 인식된 금액과 일치하는 텍스트 위에 노란 형광펜 (좌표는 %로 — 이미지 축소에 자동 대응)
+    const tc = await page.getTextContent();
+    const marks = [];
+    tc.items.forEach(it => {
+      const num = parseInt(String(it.str).replace(/[^\d]/g, ''), 10);
+      if (!num || !pf.appliedAmts.has(num)) return;
+      const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+      const h = Math.hypot(tx[2], tx[3]);
+      const w = (it.width || 0) * vp.scale;
+      const x = tx[4], y = tx[5] - h;
+      marks.push(`<div style="position:absolute;left:${(x / vp.width * 100).toFixed(2)}%;top:${((y - h * 0.12) / vp.height * 100).toFixed(2)}%;width:${(Math.max(w, h) / vp.width * 100).toFixed(2)}%;height:${(h * 1.24 / vp.height * 100).toFixed(2)}%;background:rgba(255,214,0,.45);border-radius:2px;box-shadow:0 0 0 1px rgba(240,180,0,.5);pointer-events:none"></div>`);
+    });
+    pages.push(`<div style="position:relative;margin-bottom:8px;box-shadow:0 1px 6px rgba(0,0,0,.4)">
+      <img src="${cv.toDataURL('image/jpeg', 0.82)}" style="width:100%;display:block;border-radius:2px">${marks.join('')}</div>`);
+  }
+  return `<div><div style="color:#fff;font-size:10.5px;font-weight:600;margin-bottom:5px;padding-left:2px">${pf.name} <span style="opacity:.7;font-weight:400">· 노란 표시 = 가져온 금액</span></div>${pages.join('')}</div>`;
+}
+
 function hideCostPdfPanel() {
   const panel = document.getElementById('cost-pdf-panel');
   const box = document.getElementById('cost-modal-box');
   if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
-  if (box) { box.style.width = '740px'; }
+  if (box) { box.style.width = '740px'; box.style.height = ''; box.style.maxHeight = ''; }
 }
 
 // ─── 데이터 정리: 기준일 이전 발주 일괄 삭제 ─────────────────
