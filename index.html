@@ -657,7 +657,9 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
 
 <!-- Modal: 원가 입력 -->
 <div class="modal-backdrop" id="cost-modal">
-  <div class="modal" style="width:740px">
+  <div class="modal" id="cost-modal-box" style="width:740px;flex-direction:row;padding:0">
+    <div id="cost-pdf-panel" style="display:none;width:50%;flex-shrink:0;background:#525659;overflow:auto"></div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
     <div class="modal-header">
       <div>
         <div class="modal-title" id="cost-modal-title">원가 입력</div>
@@ -784,6 +786,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('cost-modal')">취소</button>
       <button class="btn btn-primary" onclick="saveCost()">원가 저장</button>
+    </div>
     </div>
   </div>
 </div>
@@ -4210,6 +4213,7 @@ async function deleteOrder() {
 // ─── 원가 입력 모달 ──────────────────────────────────────────
 function openCostModal(key) {
   currentShipGroup = key;
+  hideCostPdfPanel(); // 새로 열 때는 폼만 (정산서 인식하면 왼쪽에 PDF 나타남)
   if (!shipGroups[key]) shipGroups[key] = defaultCostEntry();
   const sg = shipGroups[key];
   const sgOrders = orders.filter(o => getGroupKey(o) === key);
@@ -5406,8 +5410,30 @@ function applyPdfCost() {
     .forEach(it => addCostEntry({ type: it.target === '기타' ? it.label.slice(0, 20) : it.target, amount: it.amount, note: 'PDF 자동 인식: ' + it.file }));
   calcCostPreview();
   document.getElementById('pdfcost-modal').classList.remove('open');
-  showToast('원가 입력에 반영됐어요 — 금액 확인 후 저장하세요');
+  showCostPdfPanel(); // 원가 입력 모달 왼쪽에 정산서 원본을 띄워 대조하며 검토
+  showToast('원가 입력에 반영됐어요 — 왼쪽 정산서와 대조 후 저장하세요');
   _pdfCostItems = [];
+}
+
+// 원가 입력 모달을 좌(정산서 PDF)-우(입력 폼) 2단으로 — 대조하며 작업
+function showCostPdfPanel() {
+  const panel = document.getElementById('cost-pdf-panel');
+  const box = document.getElementById('cost-modal-box');
+  if (!panel || !box) return;
+  const pdfs = _pdfFiles.filter(pf => pf.blobUrl);
+  if (!pdfs.length) return;
+  box.style.width = '1300px';
+  box.style.maxWidth = '98vw';
+  panel.style.display = 'block';
+  panel.innerHTML = pdfs.map(pf =>
+    `<iframe src="${pf.blobUrl}#toolbar=1&view=FitH" style="width:100%;height:${pdfs.length > 1 ? '50%' : '100%'};min-height:${pdfs.length > 1 ? '44vh' : '86vh'};border:0;display:block"></iframe>`
+  ).join('');
+}
+function hideCostPdfPanel() {
+  const panel = document.getElementById('cost-pdf-panel');
+  const box = document.getElementById('cost-modal-box');
+  if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+  if (box) { box.style.width = '740px'; }
 }
 
 // ─── 데이터 정리: 기준일 이전 발주 일괄 삭제 ─────────────────
