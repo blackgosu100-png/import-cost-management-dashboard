@@ -3053,6 +3053,89 @@ try { _pvColW = JSON.parse(localStorage.getItem('icd_pv_colw_v1') || '{}'); } ca
 function pvW(c) { return _pvColW[c.f] || c.w; }
 function savePvColW() { try { localStorage.setItem('icd_pv_colw_v1', JSON.stringify(_pvColW)); } catch (e) {} }
 
+// ─── 제품 DB 열 구성 (숨김·순서 — 코드 수정 없이 사용자 설정) ──
+let _pvColCfg = { hide: [], order: [] };
+try { _pvColCfg = Object.assign({ hide: [], order: [] }, JSON.parse(localStorage.getItem('icd_pv_cols_v1') || '{}')); } catch (e) {}
+function savePvColCfg() { try { localStorage.setItem('icd_pv_cols_v1', JSON.stringify(_pvColCfg)); } catch (e) {} }
+
+// 현재 표시 열 = 사용자 순서 적용 + 숨김 제외 (새 열은 자동으로 뒤에 포함)
+function pvCols() {
+  const byF = Object.fromEntries(PV_COLS.map(c => [c.f, c]));
+  const ord = (_pvColCfg.order.length ? _pvColCfg.order : PV_COLS.map(c => c.f)).filter(f => byF[f]);
+  PV_COLS.forEach(c => { if (!ord.includes(c.f)) ord.push(c.f); });
+  return ord.map(f => byF[f]).filter(c => !_pvColCfg.hide.includes(c.f));
+}
+function pvFullOrder() {
+  const byF = Object.fromEntries(PV_COLS.map(c => [c.f, c]));
+  const ord = (_pvColCfg.order.length ? _pvColCfg.order : PV_COLS.map(c => c.f)).filter(f => byF[f]);
+  PV_COLS.forEach(c => { if (!ord.includes(c.f)) ord.push(c.f); });
+  return ord;
+}
+
+let _pvColPanelPos = null;
+function openPvColSettings(e) {
+  closeRowCtxMenu();
+  _pvColPanelPos = { x: e.clientX, y: e.clientY };
+  renderPvColPanel();
+}
+function renderPvColPanel() {
+  closeRowCtxMenu();
+  const byF = Object.fromEntries(PV_COLS.map(c => [c.f, c]));
+  const ord = pvFullOrder();
+  _rowCtxEl = document.createElement('div');
+  _rowCtxEl.className = 'row-ctx-menu';
+  _rowCtxEl.style.maxHeight = '70vh';
+  _rowCtxEl.style.overflowY = 'auto';
+  _rowCtxEl.innerHTML = `
+    <div style="padding:6px 14px 4px;font-size:11px;font-weight:700">⚙ 열 설정 <span style="font-weight:400;color:var(--text3)">— 체크 해제 = 숨김, ↑↓ = 순서</span></div>
+    <div class="ctx-sep"></div>
+    ${ord.map((f, i) => {
+      const c = byF[f];
+      const hidden = _pvColCfg.hide.includes(f);
+      const locked = f === 'name';
+      return `<div style="display:flex;align-items:center;gap:6px;padding:3px 12px;font-size:12px">
+        <input type="checkbox" ${hidden ? '' : 'checked'} ${locked ? 'disabled' : ''} onchange="pvColToggle('${f}')" style="cursor:pointer">
+        <span style="flex:1;${hidden ? 'color:var(--text3);' : ''}">${c.label}${locked ? ' 🔒' : ''}</span>
+        <button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="pvColMove('${f}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="pvColMove('${f}',1)" ${i === ord.length - 1 ? 'disabled' : ''}>↓</button>
+      </div>`;
+    }).join('')}
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="pvColReset()">기본값 복원 (순서·숨김·너비)</div>
+    <div class="ctx-item" onclick="closeRowCtxMenu()">닫기</div>`;
+  document.body.appendChild(_rowCtxEl);
+  const r = _rowCtxEl.getBoundingClientRect();
+  _rowCtxEl.style.left = Math.min(_pvColPanelPos.x, window.innerWidth - r.width - 8) + 'px';
+  _rowCtxEl.style.top = Math.min(_pvColPanelPos.y, window.innerHeight - r.height - 8) + 'px';
+}
+function pvColToggle(f) {
+  if (f === 'name') return;
+  const i = _pvColCfg.hide.indexOf(f);
+  if (i >= 0) _pvColCfg.hide.splice(i, 1); else _pvColCfg.hide.push(f);
+  savePvColCfg();
+  renderPvTable(); pvPaintSel(); pvPaintCells();
+  renderPvColPanel();
+}
+function pvColMove(f, dir) {
+  const ord = pvFullOrder();
+  const i = ord.indexOf(f);
+  const j = i + dir;
+  if (j < 0 || j >= ord.length) return;
+  [ord[i], ord[j]] = [ord[j], ord[i]];
+  _pvColCfg.order = ord;
+  savePvColCfg();
+  renderPvTable(); pvPaintSel(); pvPaintCells();
+  renderPvColPanel();
+}
+function pvColReset() {
+  _pvColCfg = { hide: [], order: [] };
+  _pvColW = {};
+  savePvColCfg(); savePvColW();
+  closeRowCtxMenu();
+  renderPvTable(); pvPaintSel(); pvPaintCells();
+  showToast('열 설정을 기본값으로 되돌렸어요');
+}
+
 let _pvRs = null;
 function pvStartResize(e, f) {
   e.stopPropagation();
@@ -3139,6 +3222,7 @@ function renderProductView() {
       ${brands.map(b => `<span class="todo-chip ${_pvBrand === b ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvBrand='${b}';_pvShowHidden=false;renderProductView()">${b} ${visible.filter(p => p.brand === b).length}</span>`).join('')}
       ${hiddenCnt ? `<span class="todo-chip ${_pvShowHidden ? 'on todo-amber' : 'todo-none'}" style="cursor:pointer" onclick="_pvShowHidden=!_pvShowHidden;_pvBrand='';renderProductView()">🙈 숨김 ${hiddenCnt}</span>` : ''}
       <span class="todo-chip ${_pvSkuMode ? 'on todo-sky' : 'todo-none'}" style="cursor:pointer" onclick="_pvSkuMode=!_pvSkuMode;renderProductView()">📦 SKU 모아보기</span>
+      <span class="todo-chip todo-none" style="cursor:pointer" onclick="openPvColSettings(event)">⚙ 열 설정</span>
       <span style="font-size:11px;color:var(--text3);margin-left:auto">더블클릭 수정 · No. 드래그 다중선택 · No. 우클릭 숨김/삭제</span>
     </div>
     <div id="pv-table-wrap" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -3220,12 +3304,13 @@ function renderPvTable() {
     if (foot) foot.textContent = `SKU ${_pvSkuGroups.length}종 (옵션 ${list.length}개) · 행을 클릭하면 해당 제품의 옵션 목록으로 이동 · 수정은 옵션 목록에서`;
     return;
   }
-  const totalW = PV_COLS.reduce((s, c) => s + pvW(c), 0) + 130;
+  const cols = pvCols();
+  const totalW = cols.reduce((s, c) => s + pvW(c), 0) + 130;
   wrap.innerHTML = `
     <table style="border-collapse:collapse;background:var(--surface);min-width:${totalW}px;width:100%">
       <thead><tr style="background:var(--surface2)">
         <th style="padding:7px 4px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:38px;text-align:center">No.</th>
-        ${PV_COLS.map(c => `<th data-pvth="${c.f}" style="position:relative;padding:7px 8px;font-size:11px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:${pvW(c)}px;text-align:${c.left ? 'left' : 'center'};white-space:nowrap;user-select:none">${c.label}<span class="col-resizer" title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤" onmousedown="pvStartResize(event,'${c.f}')" ondblclick="pvAutoFit(event,'${c.f}')"></span></th>`).join('')}
+        ${cols.map(c => `<th data-pvth="${c.f}" style="position:relative;padding:7px 8px;font-size:11px;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-right:1px solid var(--border);width:${pvW(c)}px;text-align:${c.left ? 'left' : 'center'};white-space:nowrap;user-select:none">${c.label}<span class="col-resizer" title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤" onmousedown="pvStartResize(event,'${c.f}')" ondblclick="pvAutoFit(event,'${c.f}')"></span></th>`).join('')}
         <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:52px">발주</th>
         <th style="padding:7px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border);width:40px"></th>
       </tr></thead>
@@ -3235,7 +3320,7 @@ function renderPvTable() {
         const total = (p.costKrw != null && p.parcelFee != null) ? +p.costKrw + +p.parcelFee : null;
         return `<tr data-pvid="${p.id}" class="${_pvSel.has(p.id) ? 'pv-sel' : ''}" style="border-bottom:1px solid var(--border);height:34px">
           <td class="row-no" data-pvno="${p.id}">${idx + 1}</td>
-          ${PV_COLS.map(c => {
+          ${cols.map(c => {
             const base = `border-right:1px solid var(--border);text-align:${c.left ? 'left' : 'center'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${pvW(c)}px`;
             if (c.img) return `<td style="${base};cursor:pointer;padding:2px" onclick="openEditProductModal('${p.id}')" title="제품 상세/이미지">${p.imageUrl ? `<img src="${p.imageUrl}" style="width:26px;height:26px;object-fit:cover;border-radius:4px;vertical-align:middle" loading="lazy">` : '<span style="color:var(--border2)">＋</span>'}</td>`;
             if (c.link) return `<td class="cell-edit" data-pvid="${p.id}" data-pvf="url" style="${base};padding:4px" ondblclick="pvEditCell(this)">${p.url ? `<a href="${p.url}" target="_blank" onclick="event.stopPropagation()" style="text-decoration:none">🔗</a>` : '—'}</td>`;
@@ -3379,7 +3464,7 @@ function pvViewActive() {
   const v = document.getElementById('view-product');
   return v && v.style.display !== 'none';
 }
-function pvEditFs() { return PV_COLS.filter(c => !c.img && !c.calc).map(c => c.f); }
+function pvEditFs() { return pvCols().filter(c => !c.img && !c.calc).map(c => c.f); }
 function pvCellTd(pid, f) { return document.querySelector(`#pv-table-wrap td[data-pvid="${pid}"][data-pvf="${f}"]`); }
 
 function pvRect() {
