@@ -1157,6 +1157,20 @@ async function loadData() {
     sortOrder: p.sort_order, hidden: !!p.hidden,
   }));
   window._prodSchemaV3 = !!(pData && pData[0] && 'hidden' in pData[0]);
+  // 행 숨김 로컬 폴백: hidden 컬럼이 없으면 이 브라우저 저장분 적용,
+  // 컬럼이 생기면(마이그레이션 완료) 로컬 숨김을 서버로 자동 승격
+  try {
+    const localHidden = new Set(JSON.parse(localStorage.getItem('icd_hidden_pids_v1') || '[]'));
+    if (!window._prodSchemaV3) {
+      products.forEach(p => { if (localHidden.has(p.id)) p.hidden = true; });
+    } else if (localHidden.size) {
+      const promote = products.filter(p => localHidden.has(p.id) && !p.hidden);
+      promote.forEach(p => p.hidden = true);
+      for (const p of promote) { try { await syncProduct(p); } catch (e) {} }
+      localStorage.removeItem('icd_hidden_pids_v1');
+      if (promote.length) console.log(`로컬 숨김 ${promote.length}건을 서버로 승격했습니다`);
+    }
+  } catch (e) {}
   // 엑셀 원본 순서 우선 정렬 (순서 없는 제품은 뒤로)
   products.sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   orders = (oData || []).map(o => ({
@@ -3428,13 +3442,21 @@ function showPvCtxMenu(x, y) {
 
 async function pvSetHidden(flag) {
   closeRowCtxMenu();
-  if (!window._prodSchemaV3) { alert('숨김 기능을 쓰려면 migration_products_v2.sql을 Supabase SQL Editor에서 다시 실행한 뒤 새로고침해 주세요.'); return; }
   const sel = products.filter(p => _pvSel.has(p.id));
   sel.forEach(p => p.hidden = flag);
   _pvSel.clear();
   renderProductView();
-  showToast(`${sel.length}개 제품 ${flag ? '숨김' : '숨김 해제'}`);
-  for (const p of sel) { try { await syncProduct(p); } catch (e) {} }
+  if (window._prodSchemaV3) {
+    showToast(`${sel.length}개 제품 ${flag ? '숨김' : '숨김 해제'}`);
+    for (const p of sel) { try { await syncProduct(p); } catch (e) {} }
+  } else {
+    // hidden 컬럼(마이그레이션) 전 로컬 폴백 — SQL 실행 후 로드 시 자동으로 서버 승격
+    let ls = new Set();
+    try { ls = new Set(JSON.parse(localStorage.getItem('icd_hidden_pids_v1') || '[]')); } catch (e) {}
+    sel.forEach(p => flag ? ls.add(p.id) : ls.delete(p.id));
+    try { localStorage.setItem('icd_hidden_pids_v1', JSON.stringify([...ls])); } catch (e) {}
+    showToast(`${sel.length}개 제품 ${flag ? '숨김' : '숨김 해제'} — 지금은 이 브라우저에만 저장 (SQL 실행 시 자동 서버 공유)`);
+  }
   saveCache();
 }
 
