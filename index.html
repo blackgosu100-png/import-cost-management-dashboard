@@ -5511,12 +5511,14 @@ async function renderPdfWithHighlights(pf) {
     // 인식된 금액과 일치하는 텍스트 위에 노란 형광펜 (좌표는 %로 — 이미지 축소에 자동 대응)
     const tc = await page.getTextContent();
     const marks = [];
+    let cbmMarked = false; // CBM은 페이지당 1곳만 (R.TON·중량 등 같은 숫자 중복 방지)
     tc.items.forEach(it => {
+      const dec = /\.\d/.test(String(it.str)); // 소수점 있음 = 단가·환율·CBM (원화 금액 아님)
       const num = parseInt(String(it.str).replace(/[^\d]/g, ''), 10);
       const numF = parseFloat(String(it.str).replace(/[^\d.]/g, ''));
       let hit = null;
-      if (num && pf.appliedAmts.has(num)) hit = 'amt';                                  // 금액 (노랑)
-      else if (pf.cbm && String(it.str).includes('.') && Math.abs(numF - pf.cbm) < 0.005) hit = 'cbm'; // CBM (파랑)
+      if (num && !dec && pf.appliedAmts.has(num)) hit = 'amt';                          // 금액 (노랑) — 정수만
+      else if (pf.cbm && !cbmMarked && dec && Math.abs(numF - pf.cbm) < 0.005) { hit = 'cbm'; cbmMarked = true; } // CBM (파랑) 1회
       if (!hit) return;
       const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
       const h = Math.hypot(tx[2], tx[3]);
