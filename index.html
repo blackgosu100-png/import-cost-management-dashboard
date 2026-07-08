@@ -658,7 +658,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
 <!-- Modal: 원가 입력 -->
 <div class="modal-backdrop" id="cost-modal">
   <div class="modal" id="cost-modal-box" style="width:740px;flex-direction:row;padding:0">
-    <div id="cost-pdf-panel" style="display:none;width:50%;flex-shrink:0;background:#525659;overflow:auto"></div>
+    <div id="cost-pdf-panel" style="display:none;width:62%;flex-shrink:0;background:#525659;overflow:auto"></div>
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
     <div class="modal-header">
       <div>
@@ -5443,8 +5443,17 @@ async function showCostPdfPanel() {
         new Promise((_, rej) => setTimeout(() => rej('timeout'), 12000)),
       ]);
     } catch (e) { html = null; }
-    // 렌더 실패 시 브라우저 내장 뷰어로 폴백 (형광펜은 없지만 원본은 보임)
-    parts.push(html || `<iframe src="${pf.blobUrl}#toolbar=1&view=FitH" style="width:100%;height:92vh;border:0;background:#fff;display:block;margin-bottom:8px"></iframe>`);
+    if (html) { parts.push(html); continue; }
+    // 렌더 실패 시: 브라우저 내장 뷰어 + 상단에 '가져온 금액' 칩 (원본과 눈으로 대조)
+    const chips = [...pf.appliedAmts].sort((a, b) => b - a)
+      .map(a => `<span style="display:inline-block;background:rgba(255,214,0,.92);color:#3a2f00;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:11px;margin:0 5px 4px 0">₩${a.toLocaleString()}</span>`).join('');
+    parts.push(`<div style="margin-bottom:8px">
+      <div style="background:#3a3d42;padding:8px 11px;border-radius:6px 6px 0 0">
+        <div style="color:#fff;font-size:11px;font-weight:700;margin-bottom:6px">${pf.name} <span style="opacity:.7;font-weight:400">— 가져온 금액 (아래 원본에서 찾아 대조하세요)</span></div>
+        <div>${chips || '<span style="color:#aaa;font-size:11px">가져온 금액 없음</span>'}</div>
+      </div>
+      <iframe src="${pf.blobUrl}#toolbar=1&view=FitH" style="width:100%;height:84vh;border:0;background:#fff;display:block"></iframe>
+    </div>`);
   }
   panel.innerHTML = parts.join('');
 }
@@ -5461,7 +5470,16 @@ async function renderPdfWithHighlights(pf) {
     const vp = page.getViewport({ scale: 2.2 });
     const cv = document.createElement('canvas');
     cv.width = vp.width; cv.height = vp.height;
-    await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    // 일부 브라우저는 화면에 붙지 않은(detached) 캔버스 렌더가 지연/중단됨 — 잠깐 붙였다 뗀다
+    cv.style.cssText = 'position:fixed;left:-99999px;top:0;pointer-events:none';
+    document.body.appendChild(cv);
+    let dataUrl;
+    try {
+      await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      dataUrl = cv.toDataURL('image/jpeg', 0.82);
+    } finally {
+      cv.remove();
+    }
     // 인식된 금액과 일치하는 텍스트 위에 노란 형광펜 (좌표는 %로 — 이미지 축소에 자동 대응)
     const tc = await page.getTextContent();
     const marks = [];
@@ -5475,7 +5493,7 @@ async function renderPdfWithHighlights(pf) {
       marks.push(`<div style="position:absolute;left:${(x / vp.width * 100).toFixed(2)}%;top:${((y - h * 0.12) / vp.height * 100).toFixed(2)}%;width:${(Math.max(w, h) / vp.width * 100).toFixed(2)}%;height:${(h * 1.24 / vp.height * 100).toFixed(2)}%;background:rgba(255,214,0,.45);border-radius:2px;box-shadow:0 0 0 1px rgba(240,180,0,.5);pointer-events:none"></div>`);
     });
     pages.push(`<div style="position:relative;margin-bottom:8px;box-shadow:0 1px 6px rgba(0,0,0,.4)">
-      <img src="${cv.toDataURL('image/jpeg', 0.82)}" style="width:100%;display:block;border-radius:2px">${marks.join('')}</div>`);
+      <img src="${dataUrl}" style="width:100%;display:block;border-radius:2px">${marks.join('')}</div>`);
   }
   return `<div><div style="color:#fff;font-size:10.5px;font-weight:600;margin-bottom:5px;padding-left:2px">${pf.name} <span style="opacity:.7;font-weight:400">· 노란 표시 = 가져온 금액</span></div>${pages.join('')}</div>`;
 }
