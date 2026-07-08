@@ -5234,6 +5234,14 @@ function renderPOPreview() {
     return `<tr style="${isDup ? 'opacity:.45' : ''}">
       <td style="padding:6px 12px;font-size:11px;max-width:250px">${r.dispName}${r.size ? `<div style="font-size:10px;color:var(--text3)">${r.size}</div>` : ''}</td>
       <td style="padding:6px 8px;font-size:11px;text-align:right;font-family:var(--mono)">¥${r.price}</td>
+      <td style="padding:6px 8px;font-size:11px;text-align:right;font-family:var(--mono)">${(() => {
+        const selP = r.sel ? products.find(p => p.id === r.sel) : null;
+        if (!selP) return '—';
+        const db = parseFloat(selP.curBuy);
+        if (!db) return '<span style="color:var(--text3)">미등록</span>';
+        const diff = r.price ? (r.price - db) / db * 100 : null;
+        return `¥${db}${diff !== null && Math.abs(diff) >= 0.5 ? ` <span style="font-size:10px;font-weight:700;color:${diff > 0 ? 'var(--danger)' : 'var(--info)'}">${diff > 0 ? '▲' : '▼'}${Math.abs(diff).toFixed(1)}%</span>` : ''}`;
+      })()}</td>
       <td style="padding:6px 8px;font-size:11px;text-align:right;font-family:var(--mono)">${r.qty}</td>
       <td style="padding:6px 12px">
         <select onchange="_poRows[${i}].sel=this.value;_poRows[${i}].selSrc='user';renderPOPreview()" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px">${opts}</select>
@@ -5248,6 +5256,7 @@ function renderPOPreview() {
         <tr>
           <th style="padding:8px 12px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border)">발주서 상품</th>
           <th style="padding:8px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">단가 ¥</th>
+          <th style="padding:8px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)" title="제품 DB의 현재구매가와 비교 — 등록 시 자동 갱신">DB 구매가</th>
           <th style="padding:8px;font-size:11px;font-weight:600;text-align:right;border-bottom:1px solid var(--border)">수량</th>
           <th style="padding:8px 12px;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--border);width:330px">연결할 제품</th>
         </tr>
@@ -5293,11 +5302,30 @@ async function confirmPO() {
     orders.push(...newOrders);
     await bulkSyncOrders(newOrders);
   }
+
+  // 원가 DB 매핑: 발주서 단가 → 제품 구매가 갱신
+  // (마지막구매가 ← 기존 현재구매가, 현재구매가 ← 발주서 단가, 구매가 원화 ← 단가 × 환율)
+  let priceUpdated = 0;
+  if (window._prodSchemaV2) {
+    const touchedP = new Map();
+    for (const r of targets) {
+      if (!r.price) continue;
+      const p = products.find(x => x.id === r.sel);
+      if (!p || parseFloat(p.curBuy) === +r.price) continue;
+      if (p.curBuy != null && p.curBuy !== '') p.lastBuy = p.curBuy;
+      p.curBuy = r.price;
+      if (rate) p.buyKrw = Math.round(r.price * rate);
+      touchedP.set(p.id, p);
+    }
+    for (const p of touchedP.values()) { try { await syncProduct(p); } catch (e) {} }
+    priceUpdated = touchedP.size;
+  }
+
   saveCache();
   renderBoard();
   btn.disabled = false; btn.textContent = '발주 등록';
   document.getElementById('po-modal').classList.remove('open');
-  showToast(`발주 ${newOrders.length}건 등록${dups ? ` · 중복 ${dups}건 건너뜀` : ''}`);
+  showToast(`발주 ${newOrders.length}건 등록${priceUpdated ? ` · 구매가 ${priceUpdated}건 갱신` : ''}${dups ? ` · 중복 ${dups}건 건너뜀` : ''}`);
   await logActivity('create', 'order', 'po-import', `발주서 가져오기: ${orderSeq || orderDate} ${newOrders.length}건`);
   _poRows = [];
 }
