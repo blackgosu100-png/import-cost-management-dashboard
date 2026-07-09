@@ -784,6 +784,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       </div>
     </div>
     <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="deleteCost()" style="color:var(--danger);margin-right:auto">원가 삭제</button>
       <button class="btn" onclick="closeModal('cost-modal')">취소</button>
       <button class="btn btn-primary" onclick="saveCost()">원가 저장</button>
     </div>
@@ -4358,6 +4359,35 @@ function calcCostPreview() {
     </div>`;
   });
   document.getElementById('cost-result-rows').innerHTML = resultHtml || '<div style="font-size:12px;color:var(--text3);padding:8px 4px">제품을 선적 묶음에 배정하면 자동 계산됩니다</div>';
+}
+
+// 이 선적의 원가 입력 내용을 통째로 삭제(초기화) — 물류비·도착원가 리셋
+async function deleteCost() {
+  const key = currentShipGroup;
+  const sg = shipGroups[key];
+  const sgOrders = orders.filter(o => getGroupKey(o) === key);
+  const hasCost = (sg && sg.saved) || sgOrders.some(o => o.costPerUnit);
+  if (!hasCost) { showToast('삭제할 원가 내용이 없습니다'); return; }
+  if (!confirm('이 선적의 원가 입력 내용을 모두 삭제합니다.\n· 물류비·통관비 입력값\n· 제품별 도착원가\n이 초기화되며 되돌릴 수 없어요. 계속할까요?')) return;
+
+  delete shipGroups[key];
+  const touched = [];
+  sgOrders.forEach(o => {
+    o.costPerUnit = null;
+    o.extraCosts = [];
+    if (o.status === 'done' || o.status === 'delay') o.status = 'active';
+    touched.push(o);
+  });
+  saveCache();
+  closeModal('cost-modal');
+  renderCostView();
+  renderBoard();
+  showToast('원가 입력 내용을 삭제했습니다');
+  try {
+    await sb.from('ship_groups').delete().eq('key', key);
+    await bulkSyncOrders(touched);
+  } catch (e) { showToast('서버 삭제 일부 실패: ' + e.message); }
+  await logActivity('delete', 'cost', key, `원가 삭제: ${getGroupName(key)} (${touched.length}품목)`);
 }
 
 async function saveCost() {
