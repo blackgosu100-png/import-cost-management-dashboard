@@ -973,7 +973,7 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
     </div>
     <div class="modal-body" style="padding:0">
       <div style="display:flex;gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap">
-        <label style="font-size:11px;color:var(--text2)">발주일 <input type="date" id="po-date" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"></label>
+        <label style="font-size:11px;color:var(--text2)">발주일 <input type="date" id="po-date" onchange="fetchPoRate()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"></label>
         <label style="font-size:11px;color:var(--text2)">차수 <input id="po-seq" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:70px"></label>
         <label style="font-size:11px;color:var(--text2)">환율 <input id="po-rate" type="number" step="any" placeholder="예: 224.28" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px" oninput="checkRateInput('po-rate','po-rate-warn')"></label>
         <span id="po-rate-warn" style="font-size:10.5px;color:var(--danger);font-weight:600"></span>
@@ -3880,27 +3880,49 @@ function getExtraRowsFromList(listEl) {
   return result;
 }
 
+// CNY→KRW 환율 조회 (발주일 기준) — 발주 등록·발주서 가져오기 공용
+async function fetchCnyKrw(dateVal) {
+  const apiDate = dateVal === today() ? 'latest' : dateVal;
+  const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${apiDate}/v1/currencies/cny.json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('API 오류');
+  const data = await res.json();
+  const krw = data.cny?.krw;
+  if (!krw) throw new Error('KRW 없음');
+  return { rate: Math.round(krw * 100) / 100, date: data.date };
+}
+
 async function fetchExchangeRate() {
   const dateVal = document.getElementById('o-date').value;
   if (!dateVal) return;
   const statusEl = document.getElementById('o-rate-status');
-  const rateEl = document.getElementById('o-rate');
   statusEl.textContent = '불러오는 중...';
   statusEl.style.color = 'var(--text3)';
   try {
-    const apiDate = dateVal === today() ? 'latest' : dateVal;
-    const url = `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${apiDate}/v1/currencies/cny.json`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('API 오류');
-    const data = await res.json();
-    const krw = data.cny?.krw;
-    if (!krw) throw new Error('KRW 없음');
-    rateEl.value = Math.round(krw * 100) / 100;
-    statusEl.textContent = `(${data.date} 기준)`;
+    const { rate, date } = await fetchCnyKrw(dateVal);
+    document.getElementById('o-rate').value = rate;
+    statusEl.textContent = `(${date} 기준)`;
     statusEl.style.color = 'var(--accent)';
   } catch(e) {
     statusEl.textContent = '자동 조회 실패 — 직접 입력해주세요';
     statusEl.style.color = 'var(--danger, #e74c3c)';
+  }
+}
+
+// 발주서 가져오기 — 발주일 기준 환율 자동 조회
+async function fetchPoRate() {
+  const dateVal = document.getElementById('po-date').value;
+  const rateEl = document.getElementById('po-rate');
+  const warnEl = document.getElementById('po-rate-warn');
+  if (!dateVal || !rateEl) return;
+  rateEl.placeholder = '조회 중...';
+  try {
+    const { rate } = await fetchCnyKrw(dateVal);
+    rateEl.value = rate;
+    checkRateInput('po-rate', 'po-rate-warn');
+  } catch(e) {
+    rateEl.placeholder = '자동 실패 — 직접 입력';
+    if (warnEl) warnEl.textContent = '';
   }
 }
 
@@ -5726,6 +5748,7 @@ function parsePurchaseOrder(raw, hIdx, filename) {
 
   renderPOPreview();
   document.getElementById('po-modal').classList.add('open');
+  fetchPoRate(); // 발주일 기준 환율 자동 조회
 }
 
 function renderPOPreview() {
