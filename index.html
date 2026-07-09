@@ -4215,15 +4215,15 @@ async function deleteOrder() {
 function openCostModal(key) {
   currentShipGroup = key;
   hideCostPdfPanel(); // 새로 열 때는 폼만 (정산서 인식하면 왼쪽에 PDF 나타남)
-  window._reportCbm = null;
   const _cbmEl = document.getElementById('c-total-cbm');
   if (_cbmEl) _cbmEl.style.color = '';
   if (!shipGroups[key]) shipGroups[key] = defaultCostEntry();
   const sg = shipGroups[key];
+  window._reportCbm = sg.reportCbm || null; // 저장된 정산서 CBM 복원
   const sgOrders = orders.filter(o => getGroupKey(o) === key);
   const totalCbm = sgOrders.reduce((s,o)=>s+((getProduct(o.pid).cbm||0)*o.qty),0);
   document.getElementById('cost-modal-title').textContent = getGroupName(key) + ' — 원가 입력';
-  document.getElementById('cost-modal-sub').textContent = (sg.route||'') + ' · ' + sgOrders.length + '개 품목 · CBM ' + totalCbm.toFixed(3);
+  document.getElementById('cost-modal-sub').textContent = (sg.route||'') + ' · ' + sgOrders.length + '개 품목 · CBM ' + (sg.reportCbm || totalCbm).toFixed(3);
   document.getElementById('c-freight').value = sg.freight || '';
   document.getElementById('c-bl').value = sg.bl || '';
   document.getElementById('c-do').value = sg.doCharge || '';
@@ -4231,7 +4231,13 @@ function openCostModal(key) {
   document.getElementById('c-inspect-cny').value = sg.inspectCny || '';
   document.getElementById('c-inspect-rate').value = sg.inspectRate || 219.63;
   document.getElementById('c-extra').value = sg.extraCost || '';
-  document.getElementById('c-total-cbm').value = totalCbm.toFixed(3) + ' CBM';
+  if (sg.reportCbm) {
+    const gap = totalCbm && Math.abs(totalCbm - sg.reportCbm) >= 0.5;
+    _cbmEl.value = `${sg.reportCbm.toFixed(3)} CBM (정산서${gap ? ` · 제품합 ${totalCbm.toFixed(2)}` : ''})`;
+    _cbmEl.style.color = gap ? 'var(--danger)' : '';
+  } else {
+    _cbmEl.value = totalCbm.toFixed(3) + ' CBM';
+  }
   // Init cost entries
   costEntryCount = 0;
   const entries = document.getElementById('cost-entries');
@@ -4324,8 +4330,11 @@ function calcCostPreview() {
 
   // Per-unit calculation
   const sgOrders = orders.filter(o => getGroupKey(o) === currentShipGroup);
-  const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
-  const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
+  const prodCbmSum = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
+  const perByCbm = prodCbmSum > 0;                     // 제품 CBM 있으면 CBM 비율, 없으면 수량 비율
+  const reportCbm = window._reportCbm || 0;
+  const dispCbm = perByCbm ? prodCbmSum : reportCbm;   // 표시용 총 CBM (제품합 없으면 정산서 값)
+  const cbmRate = perByCbm ? totalLogistics / prodCbmSum : (dispCbm > 0 ? totalLogistics / dispCbm : 0);
   // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료 포함)
   const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price * 1.0396), 0);
   // 관부가세율 = 관부가세 ÷ 물건값합계
@@ -4334,17 +4343,17 @@ function calcCostPreview() {
 
   // 중간값 표시
   document.getElementById('c-cbm-rate').textContent = cbmRate > 0 ? fmt(cbmRate) + '/CBM' : '—';
-  document.getElementById('c-cbm-detail').textContent = totalLogistics > 0 ? fmt(totalLogistics) + ' ÷ ' + totalCbm.toFixed(3) + 'CBM' : '총물류비 ÷ 총CBM';
+  document.getElementById('c-cbm-detail').textContent = totalLogistics > 0 && dispCbm > 0 ? fmt(totalLogistics) + ' ÷ ' + dispCbm.toFixed(3) + 'CBM' : (totalLogistics > 0 ? '수량 비율 배분 (제품 CBM 없음)' : '총물류비 ÷ 총CBM');
   document.getElementById('c-vat-rate').textContent = vatRate > 0 ? (vatRate*100).toFixed(2) + '%' : '—';
   document.getElementById('c-vat-detail').textContent = (custVat > 0 && totalGoodVal > 0) ? fmt(custVat) + ' ÷ ' + fmt(totalGoodVal) : '관부가세 ÷ 물건값합계';
   document.getElementById('c-goods-total').textContent = totalGoodVal > 0 ? fmt(totalGoodVal) : '—';
-  document.getElementById('c-cbm-used').textContent = '총CBM: ' + (totalCbm > 0 ? totalCbm.toFixed(3) : '—');
+  document.getElementById('c-cbm-used').textContent = '총CBM: ' + (dispCbm > 0 ? dispCbm.toFixed(3) + (perByCbm ? '' : ' (정산서)') : '—');
 
   let resultHtml = '';
   sgOrders.forEach(o => {
     const p = getProduct(o.pid);
     const goodValPerUnit = o.rate * o.price * 1.0396;
-    const logisticPerUnit = cbmRate * (p.cbm || 0);
+    const logisticPerUnit = perByCbm ? cbmRate * (p.cbm || 0) : totalLogistics / totalQty;
     const vatPerUnit = vatRate * goodValPerUnit;
     const totalPerUnit = goodValPerUnit + logisticPerUnit + vatPerUnit;
     resultHtml += `<div style="display:grid;grid-template-columns:1fr 70px 70px 70px 80px;gap:0;padding:5px 4px;border-bottom:1px solid var(--accent-border);font-size:12px;align-items:center">
@@ -4424,20 +4433,22 @@ async function saveCost() {
   const custVatTotal = customs + vat; // 관세+부가세만 물건값 기준
   const extraCostsTotal = extraCosts.reduce((s, e) => s + e.amount, 0);
 
-  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, otherLogistics: extraCostsTotal, extraCost, saved:true});
+  const reportCbm = window._reportCbm || null;
+  Object.assign(sg, {freight, bl, doCharge, origin, inspectCny, inspectRate, customs, vat, clearance, inland, otherLogistics: extraCostsTotal, extraCost, reportCbm, saved:true});
   // 물류비 = 해운비 + 통관수수료 + 내륙운송비 + 기타항목 (사은품·전단지 등 개당비용은 제외)
   const totalLogistics = shipping + clearance + inland + extraCostsTotal;
-  const totalCbm = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
-  const cbmRate = totalCbm > 0 ? totalLogistics / totalCbm : 0;
+  const prodCbmSum = sgOrders.reduce((s, o) => s + ((getProduct(o.pid).cbm||0) * o.qty), 0);
+  const perByCbm = prodCbmSum > 0;                     // 제품 CBM 있으면 CBM 비율, 없으면 수량 비율로 배분
+  const cbmRate = perByCbm ? totalLogistics / prodCbmSum : 0;
   // 물건값: 위안단가 × 환율 × 1.0396 (카드수수료)
   const totalGoodVal = sgOrders.reduce((s, o) => s + (o.qty * o.rate * o.price * 1.0396), 0);
   const vatRate = totalGoodVal > 0 ? custVatTotal / totalGoodVal : 0;
-  const totalQty = sgOrders.reduce((s,o)=>s+o.qty,0);
+  const totalQty = sgOrders.reduce((s,o)=>s+o.qty,0) || 1;
 
   sgOrders.forEach(o => {
     const p = getProduct(o.pid);
     const goodValPerUnit = o.rate * o.price * 1.0396;
-    const logisticPerUnit = cbmRate * (p.cbm || 0);
+    const logisticPerUnit = perByCbm ? cbmRate * (p.cbm || 0) : totalLogistics / totalQty;
     const vatPerUnit = vatRate * goodValPerUnit;
     o.costPerUnit = Math.round(goodValPerUnit + logisticPerUnit + vatPerUnit);
     if (extraCosts.length > 0) o.extraCosts = [...(o.extraCosts||[]), ...extraCosts];
