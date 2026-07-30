@@ -1,6 +1,15 @@
 # 작업 로그 — 수출입원가관리 대시보드
 
-## 마지막 작업: 2026-05-09
+## 마지막 작업: 2026-07-30 — 직원 권한 시스템 + 자동 백업
+
+### 2026-07-30 작업 내용
+- **직원 권한 시스템** (관리자/직원/조회 전용 3단계)
+  - `profiles` 테이블 + RLS 재설정 → `migration_roles_v3.sql` (Supabase SQL Editor에서 실행 필요)
+  - 계정 관리 Edge Function → `edge-function_admin-users.ts` (Supabase 대시보드에서 `admin-users` 이름으로 배포 필요)
+  - index.html: 직원 관리 탭(관리자 전용 — 계정 생성/권한 변경/비번 재설정/삭제), 역할 배지, 조회 전용 계정 편집 차단
+  - 관리자 계정: noahpark12@naver.com (대시보드 로그인용 Supabase 계정)
+- **맥미니 자동 백업** → `/Users/noah-mac/backups/import-dashboard/` (README.md 참고)
+  - config.env에 서비스 키 입력 + launchd 등록은 사용자 작업 필요
 
 ---
 

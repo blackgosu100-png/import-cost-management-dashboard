@@ -62,6 +62,9 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .nav-icon { width: 16px; height: 16px; opacity: .5; flex-shrink: 0; }
 .nav-item.active .nav-icon { opacity: 1; }
 .nav-item:hover .nav-icon { opacity: .75; }
+/* 권한: 조회 전용 계정은 편집 버튼 숨김 (서버 RLS가 최종 차단) */
+.role-viewer .perm-write { display: none !important; }
+.role-badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; background: var(--accent-bg); color: var(--accent); font-weight: 600; display: none; }
 .sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text3); white-space: nowrap; }
 
 /* 접힌 사이드바: 아이콘만, hover 시 임시로 펼쳐 보기(오버레이 — 본문 안 밀림) */
@@ -416,6 +419,10 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
         <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
         <span class="nav-label">제품 DB</span>
       </div>
+      <div class="nav-item" id="nav-admin" style="display:none" onclick="switchTab('admin')" title="직원 관리">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5"/></svg>
+        <span class="nav-label">직원 관리</span>
+      </div>
     </nav>
     <div class="sidebar-footer">마지막 업데이트: 오늘</div>
   </div>
@@ -430,10 +437,11 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       <span class="topbar-title" id="topbar-title">발주 추적 보드</span>
     </div>
     <div class="topbar-right">
+      <span id="role-badge" class="role-badge"></span>
       <span id="user-email" style="font-size:11px;color:var(--text3);margin-right:4px"></span>
       <button class="btn btn-sm btn-ghost" onclick="signOut()" style="color:var(--text3);font-size:11px">로그아웃</button>
       <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
-      <button class="btn btn-primary btn-sm" onclick="openOrderModal()">
+      <button class="btn btn-primary btn-sm perm-write" onclick="openOrderModal()">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
         발주 등록
       </button>
@@ -451,12 +459,12 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
       <div id="active-filters" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
       <div class="toolbar-spacer"></div>
       <button class="btn btn-sm btn-ghost" onclick="clearAllFilters()" id="clear-filters-btn" style="display:none;color:var(--danger)">필터 초기화</button>
-      <button class="btn btn-sm btn-ghost" onclick="document.getElementById('import-excel-input').click()">
+      <button class="btn btn-sm btn-ghost perm-write" onclick="document.getElementById('import-excel-input').click()">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8V1M3 4l3-3 3 3M1 10h10"/></svg>
         발주 엑셀 가져오기
       </button>
       <input type="file" id="import-excel-input" accept=".xlsx,.xls" style="display:none" onchange="importOrderExcel(this)">
-      <button class="btn btn-sm btn-ghost" onclick="openCleanupModal()" title="기준일 이전의 오래된 발주 삭제" style="color:var(--text3)">🧹 데이터 정리</button>
+      <button class="btn btn-sm btn-ghost perm-write" onclick="openCleanupModal()" title="기준일 이전의 오래된 발주 삭제" style="color:var(--text3)">🧹 데이터 정리</button>
     </div>
 
     <!-- 오늘 할 일 바 -->
@@ -525,16 +533,16 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 1v7M3 6l3 3 3-3M1 10h10"/></svg>
             템플릿 다운로드
           </button>
-          <button class="btn btn-sm" onclick="document.getElementById('excel-upload-input').click()">
+          <button class="btn btn-sm perm-write" onclick="document.getElementById('excel-upload-input').click()">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8V1M3 4l3-3 3 3M1 10h10"/></svg>
             엑셀 업로드
           </button>
           <input type="file" id="excel-upload-input" accept=".xlsx,.xls" style="display:none" onchange="uploadProductExcel(this)">
-          <button class="btn btn-sm" onclick="document.getElementById('img-folder-input').click()" title="옵션코드 파일명(예: 720cin-20.png)으로 자동 매칭">
+          <button class="btn btn-sm perm-write" onclick="document.getElementById('img-folder-input').click()" title="옵션코드 파일명(예: 720cin-20.png)으로 자동 매칭">
             🖼 이미지 일괄 업로드
           </button>
           <input type="file" id="img-folder-input" webkitdirectory multiple style="display:none" onchange="bulkUploadProductImages(this)">
-          <button class="btn btn-primary btn-sm" onclick="openProductModal()">
+          <button class="btn btn-primary btn-sm perm-write" onclick="openProductModal()">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
             제품 등록
           </button>
@@ -551,6 +559,30 @@ td.cell-edit.cell-editing input.parse-err { border-color:#d43c3c; background:#fd
         <div id="excel-preview-table" style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>
       </div>
       <div id="product-view-content"></div>
+    </div>
+  </div>
+
+  <!-- Admin View (직원 관리) -->
+  <div id="view-admin" style="display:none;flex:1;overflow:auto;padding:24px">
+    <div style="max-width:860px;margin:0 auto">
+      <div style="font-size:14px;font-weight:600;color:var(--text)">직원 관리</div>
+      <div style="font-size:12px;color:var(--text3);margin:4px 0 16px">권한 안내 — <b>관리자</b>: 전체 기능 + 계정 관리 · <b>직원</b>: 데이터 입력/수정 · <b>조회 전용</b>: 보기만 가능</div>
+      <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:20px;background:var(--surface)">
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text)">직원 추가</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="adm-new-email" type="email" class="form-input" placeholder="이메일" style="flex:2;min-width:180px">
+          <input id="adm-new-name" class="form-input" placeholder="이름 (선택)" style="flex:1;min-width:110px">
+          <input id="adm-new-pw" class="form-input" placeholder="초기 비밀번호 (6자 이상)" style="flex:1;min-width:160px">
+          <select id="adm-new-role" class="form-input" style="width:110px">
+            <option value="staff">직원</option>
+            <option value="viewer">조회 전용</option>
+            <option value="admin">관리자</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="adminCreateUser()">계정 만들기</button>
+        </div>
+        <div id="adm-msg" style="font-size:12px;margin-top:8px;min-height:14px;color:var(--text2)"></div>
+      </div>
+      <div id="admin-user-list" style="font-size:12px;color:var(--text3)">불러오는 중...</div>
     </div>
   </div>
 
@@ -1078,6 +1110,7 @@ async function initApp() {
   if (session) {
     currentUser = session.user;
     document.getElementById('user-email').textContent = currentUser.email;
+    loadMyRole();
     // 캐시 있으면 즉시 렌더링
     if (loadCache()) {
       document.getElementById('login-overlay').style.display = 'none';
@@ -1097,6 +1130,7 @@ async function initApp() {
     if (event === 'SIGNED_IN' && session) {
       currentUser = session.user;
       document.getElementById('user-email').textContent = currentUser.email;
+      loadMyRole();
       if (loadCache()) {
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('app').style.display = 'grid';
@@ -1110,6 +1144,10 @@ async function initApp() {
       setLoginLoading(false);
     } else if (event === 'SIGNED_OUT') {
       currentUser = null;
+      myRole = 'staff';
+      document.body.classList.remove('role-viewer');
+      const navAdm = document.getElementById('nav-admin');
+      if (navAdm) navAdm.style.display = 'none';
       clearCache();
       document.getElementById('login-overlay').style.display = 'flex';
       document.getElementById('app').style.display = 'none';
@@ -1132,6 +1170,174 @@ async function signIn() {
 
 async function signOut() {
   await sb.auth.signOut();
+}
+
+// ─── 권한(Role) & 직원 관리 ──────────────────────────────────
+// admin=전체+계정관리 / staff=입력·수정 / viewer=조회만 (서버 RLS가 최종 강제)
+let myRole = 'staff';
+let _viewerGuarded = false;
+
+async function loadMyRole() {
+  try {
+    const { data } = await sb.from('profiles').select('role').eq('id', currentUser.id).single();
+    myRole = (data && data.role) || 'staff';
+  } catch (e) { myRole = 'staff'; }
+  applyRoleUI();
+}
+
+function applyRoleUI() {
+  document.body.classList.toggle('role-viewer', myRole === 'viewer');
+  const nav = document.getElementById('nav-admin');
+  if (nav) nav.style.display = myRole === 'admin' ? 'flex' : 'none';
+  const badge = document.getElementById('role-badge');
+  const labels = { admin: '관리자', staff: '직원', viewer: '조회 전용' };
+  if (badge) { badge.textContent = labels[myRole] || ''; badge.style.display = 'inline-block'; }
+  if (myRole === 'viewer') guardViewer();
+}
+
+// 조회 전용 계정: 저장/수정/삭제 시도를 클라이언트에서도 차단 (안내 메시지용)
+// 설치는 1회, 차단 여부는 호출 시점의 myRole로 판단 (같은 브라우저에서 계정 전환해도 안전)
+function guardViewer() {
+  if (_viewerGuarded) return;
+  _viewerGuarded = true;
+  const blocked = () => {
+    alert('조회 전용 계정입니다. 수정 권한이 필요하면 관리자에게 문의하세요.');
+    const t = function () {};
+    const p = new Proxy(t, {
+      get: (_, prop) => prop === 'then'
+        ? (resolve) => resolve({ data: null, error: { message: '조회 전용 계정' } })
+        : () => p,
+      apply: () => p,
+    });
+    return p;
+  };
+  const wrap = (obj, methods) => {
+    methods.forEach(m => {
+      if (typeof obj[m] !== 'function') return;
+      const orig = obj[m].bind(obj);
+      obj[m] = (...args) => myRole === 'viewer' ? blocked() : orig(...args);
+    });
+  };
+  const origFrom = sb.from.bind(sb);
+  sb.from = (table) => {
+    const b = origFrom(table);
+    wrap(b, ['insert', 'update', 'upsert', 'delete']);
+    return b;
+  };
+  const origStorageFrom = sb.storage.from.bind(sb.storage);
+  sb.storage.from = (bucket) => {
+    const s = origStorageFrom(bucket);
+    wrap(s, ['upload', 'update', 'remove', 'move', 'copy']);
+    return s;
+  };
+}
+
+async function callAdminFn(action, payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(SUPABASE_URL + '/functions/v1/admin-users', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + (session ? session.access_token : ''),
+      'apikey': SUPABASE_KEY,
+    },
+    body: JSON.stringify(Object.assign({ action: action }, payload || {})),
+  });
+  let json = {};
+  try { json = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(json.error || ('요청 실패 (' + res.status + ')'));
+  return json;
+}
+
+function escT(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function renderAdminView() {
+  const box = document.getElementById('admin-user-list');
+  box.innerHTML = '<div style="color:var(--text3)">불러오는 중...</div>';
+  let users;
+  try {
+    users = (await callAdminFn('list')).users;
+  } catch (e) {
+    box.innerHTML = '<div style="color:var(--danger);line-height:1.7">직원 목록을 불러오지 못했습니다: ' + escT(e.message) +
+      '<br><span style="color:var(--text3)">관리 기능(Edge Function)이 아직 배포되지 않았다면 프로젝트 폴더의 edge-function_admin-users.ts 파일 상단 안내대로 배포해주세요.</span></div>';
+    return;
+  }
+  const roleLabels = { staff: '직원', viewer: '조회 전용', admin: '관리자' };
+  const roleOpts = r => ['staff', 'viewer', 'admin'].map(v =>
+    '<option value="' + v + '"' + (r === v ? ' selected' : '') + '>' + roleLabels[v] + '</option>').join('');
+  box.innerHTML =
+    '<div style="border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface)">' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr style="border-bottom:1px solid var(--border);color:var(--text3);text-align:left">' +
+    '<th style="padding:9px 12px;font-weight:500">이메일</th><th style="padding:9px 12px;font-weight:500">이름</th>' +
+    '<th style="padding:9px 12px;font-weight:500">권한</th><th style="padding:9px 12px;font-weight:500">마지막 로그인</th>' +
+    '<th style="padding:9px 12px;font-weight:500;text-align:right">관리</th></tr></thead><tbody>' +
+    users.map(u => {
+      const isMe = currentUser && u.id === currentUser.id;
+      const last = u.last_sign_in_at
+        ? new Date(u.last_sign_in_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '-';
+      return '<tr style="border-bottom:1px solid var(--border)">' +
+        '<td style="padding:9px 12px;color:var(--text)">' + escT(u.email) + (isMe ? ' <span style="color:var(--accent)">(나)</span>' : '') + '</td>' +
+        '<td style="padding:9px 12px;color:var(--text2)">' + escT(u.name || '-') + '</td>' +
+        '<td style="padding:9px 12px">' + (isMe
+          ? '<span style="font-weight:600;color:var(--accent)">' + (roleLabels[u.role] || u.role) + '</span>'
+          : '<select onchange="adminSetRole(\'' + u.id + '\', this.value)" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">' + roleOpts(u.role) + '</select>') + '</td>' +
+        '<td style="padding:9px 12px;color:var(--text3)">' + last + '</td>' +
+        '<td style="padding:9px 12px;text-align:right;white-space:nowrap">' +
+          '<button class="btn btn-sm btn-ghost" onclick="adminResetPw(\'' + u.id + '\',\'' + escT(u.email) + '\')">비밀번호 재설정</button>' +
+          (isMe ? '' : '<button class="btn btn-sm btn-ghost" style="color:var(--danger)" onclick="adminDeleteUser(\'' + u.id + '\',\'' + escT(u.email) + '\')">삭제</button>') +
+        '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+async function adminCreateUser() {
+  const email = document.getElementById('adm-new-email').value.trim();
+  const name = document.getElementById('adm-new-name').value.trim();
+  const pw = document.getElementById('adm-new-pw').value;
+  const role = document.getElementById('adm-new-role').value;
+  const msg = document.getElementById('adm-msg');
+  if (!email || !pw || pw.length < 6) {
+    msg.style.color = 'var(--danger)'; msg.textContent = '이메일과 6자 이상 비밀번호를 입력해주세요'; return;
+  }
+  msg.style.color = 'var(--text3)'; msg.textContent = '계정 생성 중...';
+  try {
+    await callAdminFn('create', { email: email, name: name, password: pw, role: role });
+    msg.style.color = 'var(--accent)';
+    msg.textContent = '✓ 계정 생성 완료 — ' + email + ' (초기 비밀번호를 직원에게 전달하세요)';
+    document.getElementById('adm-new-email').value = '';
+    document.getElementById('adm-new-name').value = '';
+    document.getElementById('adm-new-pw').value = '';
+    renderAdminView();
+  } catch (e) {
+    msg.style.color = 'var(--danger)'; msg.textContent = '실패: ' + e.message;
+  }
+}
+
+async function adminSetRole(id, role) {
+  try { await callAdminFn('setRole', { id: id, role: role }); }
+  catch (e) { alert('권한 변경 실패: ' + e.message); }
+  renderAdminView();
+}
+
+async function adminResetPw(id, email) {
+  const pw = prompt(email + ' 계정의 새 비밀번호를 입력하세요 (6자 이상)');
+  if (pw == null) return;
+  if (pw.length < 6) { alert('비밀번호는 6자 이상이어야 합니다'); return; }
+  try {
+    await callAdminFn('resetPassword', { id: id, password: pw });
+    alert('비밀번호가 변경되었습니다. 직원에게 전달해주세요.');
+  } catch (e) { alert('실패: ' + e.message); }
+}
+
+async function adminDeleteUser(id, email) {
+  if (!confirm(email + ' 계정을 삭제할까요?\n(그동안 입력한 데이터는 남고, 로그인만 못 하게 됩니다)')) return;
+  try {
+    await callAdminFn('delete', { id: id });
+    renderAdminView();
+  } catch (e) { alert('삭제 실패: ' + e.message); }
 }
 
 async function loadData() {
@@ -1332,13 +1538,15 @@ function switchTab(tab) {
   document.getElementById('view-board').style.display = tab === 'board' ? 'flex' : 'none';
   document.getElementById('view-cost').style.display = tab === 'cost' ? 'block' : 'none';
   document.getElementById('view-product').style.display = tab === 'product' ? 'block' : 'none';
+  document.getElementById('view-admin').style.display = tab === 'admin' ? 'block' : 'none';
   // 탭 간 선택 상태 정리 — 복사/단축키가 다른 탭을 가로채지 않게
   if (tab !== 'board' && typeof selRange !== 'undefined') { selRange = null; if (typeof paintSel === 'function') paintSel(); if (typeof removeCopyAnts === 'function') removeCopyAnts(); }
   if (tab !== 'product' && typeof _pvCellSel !== 'undefined') { _pvCellSel = null; if (typeof pvPaintCells === 'function') pvPaintCells(); }
-  const titles = {board:'발주 추적 보드', cost:'원가 계산', product:'제품 DB'};
+  const titles = {board:'발주 추적 보드', cost:'원가 계산', product:'제품 DB', admin:'직원 관리'};
   document.getElementById('topbar-title').textContent = titles[tab];
   if (tab === 'cost') renderCostView();
   if (tab === 'product') renderProductView();
+  if (tab === 'admin') renderAdminView();
 }
 
 // ─── 컬럼 필터 (엑셀 방식) ───────────────────────────────────
